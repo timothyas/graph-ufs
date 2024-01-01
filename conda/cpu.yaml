@@ -1,0 +1,41 @@
+name: graphufs-cpu
+channels:
+    - conda-forge
+dependencies:
+    - python=3.11
+# Basics
+    - numpy
+    - matplotlib
+# xarray et al
+    - xarray
+    - netCDF4
+    - h5netcdf
+    - bottleneck
+    - dask[complete]
+    - zarr
+    - cftime
+# jupyter etc
+    - jupyter
+    - ipython
+    - ipykernel
+# filesystem
+    - fsspec
+    - gcsfs
+# graphcast
+    - cartopy
+    - chex
+    - google-colab
+    - dm-haiku
+    - jax
+    - jraph
+    - pandas
+    - rtree
+    - dm-tree
+    - trimesh
+    - typing_extensions
+    - google-api-python-client
+    - pip
+# Don't pull graphcast since we fork it and develop it
+#    - pip
+#    - pip:
+#        - https://github.com/deepmind/graphcast/archive/master.zip
