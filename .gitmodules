@@ -1,0 +1,4 @@
+[submodule "graphcast"]
+	path = graphcast
+	url = git@github.com:NOAA-PSL/graphcast.git
+	branch = feature/replay-integration
