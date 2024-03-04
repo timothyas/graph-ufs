@@ -79,12 +79,13 @@ class ReplayEmulator:
         ds.close()
 
 
-    def preprocess(self, xds, batch_index=0):
+    def preprocess(self, xds, batch_index=0, drop_cftime=True):
         """Prepare a single batch for GraphCast
 
         Args:
             xds (xarray.Dataset): with replay data
             batch_index (int, optional): the index of this batch
+            drop_cftime (bool, optional): if True, drop the ``cftime`` and ``ftime`` coordinates that exist in the Replay dataset to avoid future JAX problems (might be helpful to keep them for some debugging cases)
 
         Returns:
             bds (xarray.Dataset): this batch of data
@@ -112,7 +113,15 @@ class ReplayEmulator:
         bds = bds.expand_dims({
             "batch": [batch_index],
         })
-        bds = bds.set_coords(["datetime", "cftime", "ftime"])
+        bds = bds.set_coords(["datetime"])
+
+        # cftime is a data_var not a coordinate, but if it's made to be a coordinate
+        # it causes crazy JAX problems when making predictions with graphufs.training.run_forward.apply
+        # because it thinks something is wrong when the input/output cftime object values are different
+        # (even though... of course they will be for prediction)
+        # safest to drop here to avoid confusion, along with ftime since it is also not used
+        if drop_cftime:
+            bds = bds.drop(["cftime", "ftime"])
         return bds
 
 
