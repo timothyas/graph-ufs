@@ -1,7 +1,5 @@
 from jax import tree_util
 
-import sys
-sys.path.append("../..")
 from graphufs import ReplayEmulator
 
 class P0Emulator(ReplayEmulator):
@@ -12,7 +10,7 @@ class P0Emulator(ReplayEmulator):
         "std": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/1.00-degree/03h-freq/normalization/stddev_by_level.p0.zarr",
         "stddiff": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/1.00-degree/03h-freq/normalization/diffs_stddev_by_level.p0.zarr",
     }
-
+    local_store_path = "./zarr-stores"
 
     # these could be moved to a yaml file later
     # task config options
@@ -45,12 +43,23 @@ class P0Emulator(ReplayEmulator):
         500,
         1000,
     )
-    input_duration = "12h"
+
+    # time related
+    delta_t = "6h"              # the model time step
+    input_duration = "6h 1s"    # time covered by initial condition(s), note the 1s is necessary for GraphCast code
+    target_lead_time = "6h"     # how long is the forecast ... at what point do we compare model to targets
+    training_dates = (          # bounds of training data (inclusive)
+        "1993-12-31T18",        # start
+        "1994-12-31T18"         # stop, includes all of 1994
+    )
+
+    # training protocol
+    batch_size = 16
 
     # model config options
     resolution = 1.0
     mesh_size = 2
-    latent_size = 32
+    latent_size = 256
     gnn_msg_steps = 4
     hidden_layers = 1
     radius_query_fraction_edge_length = 0.6
@@ -59,6 +68,7 @@ class P0Emulator(ReplayEmulator):
     # this is used for initializing the state in the gradient computation
     grad_rng_seed = 0
     init_rng_seed = 0
+    training_batch_rng_seed = 100
 
 tree_util.register_pytree_node(
     P0Emulator,
