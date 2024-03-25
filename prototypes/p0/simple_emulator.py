@@ -10,6 +10,8 @@ class P0Emulator(ReplayEmulator):
         "std": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/1.00-degree/03h-freq/normalization/stddev_by_level.p0.zarr",
         "stddiff": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/1.00-degree/03h-freq/normalization/diffs_stddev_by_level.p0.zarr",
     }
+    wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2022-6h-64x32_equiangular_conservative.zarr"
+
     local_store_path = "./zarr-stores"
 
     # these could be moved to a yaml file later
@@ -55,6 +57,7 @@ class P0Emulator(ReplayEmulator):
 
     # training protocol
     batch_size = 16
+    num_epochs = 1
 
     # model config options
     resolution = 1.0
@@ -69,6 +72,12 @@ class P0Emulator(ReplayEmulator):
     grad_rng_seed = 0
     init_rng_seed = 0
     training_batch_rng_seed = 100
+
+    # data chunking options
+    chunks_per_epoch = 1
+    batches_per_chunk = 1
+    checkpoint_chunks = 1
+    checkpoint_dir = "./nets"
 
 tree_util.register_pytree_node(
     P0Emulator,

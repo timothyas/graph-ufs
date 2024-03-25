@@ -25,6 +25,8 @@ class ReplayEmulator:
         "std": "",
         "stddiff": "",
     }
+    wb2_obs_url = ""
+    
     local_store_path = None
 
     # these could be moved to a yaml file later
@@ -43,6 +45,7 @@ class ReplayEmulator:
 
     # training protocol
     batch_size = None           # number of forecasts averaged over in loss per optim_step
+    num_epochs = None           # number of epochs
 
     # model config options
     resolution = None
@@ -57,6 +60,12 @@ class ReplayEmulator:
     grad_rng_seed = None
     init_rng_seed = None
     training_batch_rng_seed = None # used to randomize the training batches
+
+    # data chunking options
+    chunks_per_epoch = None          # number of chunks per epoch
+    batches_per_chunk = None         # number of batches per chunk
+    checkpoint_chunks = None         # save model after this many chunks are processed
+    checkpoint_dir = ""              # directory to store checkpoints
 
     def __init__(self):
 
@@ -162,6 +171,7 @@ class ReplayEmulator:
     def get_training_batches(self,
         n_optim_steps=None,
         drop_cftime=True,
+        random_sample=True,
         ):
         """Get a dataset with all the batches of data necessary for training
 
@@ -184,11 +194,13 @@ class ReplayEmulator:
             inputs_path = os.path.join(self.local_store_path, "training-inputs.zarr")
             targets_path = os.path.join(self.local_store_path, "training-targets.zarr")
             forcings_path = os.path.join(self.local_store_path, "training-forcings.zarr")
+            inittimes_path = os.path.join(self.local_store_path, "training-inittimes.zarr")
             if all(os.path.exists(x) for x in [inputs_path, targets_path, forcings_path]):
                 inputs = xr.open_zarr(inputs_path)
                 targets = xr.open_zarr(targets_path)
                 forcings = xr.open_zarr(forcings_path)
-                return inputs, targets, forcings
+                inittimes = xr.open_zarr(inittimes_path)
+                return inputs, targets, forcings, inittimes
 
         # grab the dataset and subsample training portion at desired model time step
         xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
@@ -235,12 +247,15 @@ class ReplayEmulator:
 
         # randomly sample without replacement
         # note that GraphCast samples with replacement
-        rstate = np.random.RandomState(seed=self.training_batch_rng_seed)
-        forecast_initial_times = rstate.choice(
-            all_initial_times,
-            size=(n_forecasts,),
-            replace=False
-        )
+        if random_sample:
+            rstate = np.random.RandomState(seed=self.training_batch_rng_seed)
+            forecast_initial_times = rstate.choice(
+                all_initial_times,
+                size=(n_forecasts,),
+                replace=False
+            )
+        else:
+            forecast_initial_times = all_initial_times[:n_forecasts]
 
         # warnings before we get started
         if pd.Timedelta(self.target_lead_time) > delta_t:
@@ -258,6 +273,7 @@ class ReplayEmulator:
         inputs = []
         targets = []
         forcings = []
+        inittimes = []
         timer.start("Extracting inputs, targets, and forcings")
         for i, (k, b) in enumerate(
             itertools.product(range(n_optim_steps), range(self.batch_size))
@@ -280,10 +296,15 @@ class ReplayEmulator:
                 **dataclasses.asdict(self.task_config),
             )
 
+            # fix this later for batch_size != 1
+            this_inittimes = batch.datetime.isel(time=0)
+            this_inittimes = this_inittimes.to_dataset(name="inittimes")
+
             # note that the optim_step dim has to be added after the extract_inputs_targets_forcings call
             inputs.append(this_input.expand_dims({"optim_step": [k]}))
             targets.append(this_target.expand_dims({"optim_step": [k]}))
             forcings.append(this_forcing.expand_dims({"optim_step": [k]}))
+            inittimes.append(this_inittimes.expand_dims({"optim_step": [k]}))
             if b == self.batch_size and k // 10 ==  k / 10:
                 print(f" ... done with {k} optim steps")
 
@@ -293,8 +314,9 @@ class ReplayEmulator:
         inputs = self.combine_chunk_store(inputs, "training-inputs.zarr")
         targets = self.combine_chunk_store(targets, "training-targets.zarr")
         forcings = self.combine_chunk_store(forcings, "training-forcings.zarr")
+        inittimes = self.combine_chunk_store(inittimes, "training-inittimes.zarr", True)
         timer.stop()
-        return inputs, targets, forcings
+        return inputs, targets, forcings, inittimes
 
 
     def load_normalization(self, **kwargs):
@@ -364,7 +386,7 @@ class ReplayEmulator:
         return xr.DataArray(pfull, coords={"pfull": pfull}, dims="pfull")
 
 
-    def combine_chunk_store(self, ds_list, zname):
+    def combine_chunk_store(self, ds_list, zname, chunk_special = False):
         """Used by the training batch creation code to combine many datasets for optimization"""
         newds = xr.combine_by_coords(ds_list)
         chunksize = {
@@ -375,7 +397,7 @@ class ReplayEmulator:
             "lat": -1,
             "lon": -1,
         }
-        chunksize = {k:v for k,v in chunksize.items() if k in newds}
+        chunksize = {k:v for k,v in chunksize.items() if k in newds.dims}
         newds = newds.chunk(chunksize)
         if self.local_store_path is not None:
             newds.to_zarr(os.path.join(self.local_store_path, zname))
