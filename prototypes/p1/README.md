@@ -26,8 +26,8 @@ The inputs, targets, and forcings used in this model are as follows:
 * local time of the day [clock]					- INPUT/FORCING	
 * local time of the year [clock]				- INPUT/FORCING
  
-# Pressure Levels [13]
-50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000 (native pressure levels)  
+# Pressure Levels
+13 native levels: 50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000 
 
 # Graphcast Model Configuration
 * `delta_t` = 6 hr
@@ -36,7 +36,7 @@ The inputs, targets, and forcings used in this model are as follows:
 * `target_lead_time` = 6 hr
 	the model forecast lead time
 
-* resolution = 1 degrees 
+* `resolution` = 1 degree 
 	nominal spatial resolution
 
 * `mesh_size` = 5 
@@ -65,7 +65,7 @@ The inputs, targets, and forcings used in this model are as follows:
 	model weights with a different graph structure to what it was trained on.
 
 # Replay dataset details
-* resolution = 1 degree
+* `resolution` = 1 degree
 	obtained by coarsening the original 1/4 degree dataset by subsampling (TBD)
 
 * `training_dates` = Dec 31, 1993 18:00:00 - Dec 31, 1994, 18:00:00
