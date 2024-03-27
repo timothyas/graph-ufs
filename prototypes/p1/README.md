@@ -1,7 +1,5 @@
-# graph-ufs: Skillful medium-range forecasts using Graph Neural Network trained on 
-# 1 degree UFS Replay dataset
+# graph-ufs: Prototype P1
 
-# SUMMARY
 This prototype aims to reproduce `Graphcast_small` outcomes. `GraphCast_small`, is
 a smaller, low-resolution version of GraphCast that uses 1 degree spatial
 resolution, 13 pressure levels, and a smaller mesh. While the original `Graphcast_small` 
