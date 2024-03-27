@@ -76,12 +76,12 @@ class P1Emulator(ReplayEmulator):
 
     # model config options
     resolution = 1.0
-    mesh_size = 4
-    latent_size = 32
-    gnn_msg_steps = 4
+    mesh_size = 5
+    latent_size = 512
+    gnn_msg_steps = 16
     hidden_layers = 1
     radius_query_fraction_edge_length = 0.6
-    mesh2grid_edge_normalization_factor = None # 0.6180338738074472
+    mesh2grid_edge_normalization_factor = 0.6180338738074472
 
     # this is used for initializing the state in the gradient computation
     grad_rng_seed = 0
