@@ -72,7 +72,7 @@ class P1Emulator(ReplayEmulator):
     )
 
     # training protocol
-    batch_size = 16
+    batch_size = 32
 
     # model config options
     resolution = 1.0
