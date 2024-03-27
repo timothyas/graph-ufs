@@ -14,7 +14,8 @@ class P1Emulator(ReplayEmulator):
 
     # these could be moved to a yaml file later
     # task config options
-    input_variables = ( 
+    input_variables = (
+        "delz", # height thickness (as a replacement for geopotential)
         "hgtsfc", # geopotential at surface
         "land", # land-sea mask
         "tmp2m", # 2m temperature
@@ -34,6 +35,7 @@ class P1Emulator(ReplayEmulator):
         "day_progress_cos",
     )
     target_variables = (
+        "delz"
         "tmp2m",
         "pressfc",
         "ugrd10m",
