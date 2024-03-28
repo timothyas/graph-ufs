@@ -50,7 +50,7 @@ The model configuration and the details are provided in `p1.py`.
 For training this configuration, use `run_training.py` as 
 
 ```bash
-python train.py 
+python run_training.py 
 ```
 
 # Normalization
