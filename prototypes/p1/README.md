@@ -2,12 +2,25 @@
 
 This prototype aims to reproduce `Graphcast_small` outcomes. `GraphCast_small`, is
 a smaller, low-resolution version of GraphCast that uses 1 degree spatial
-resolution, 13 pressure levels, and a smaller mesh. While the original `Graphcast_small` 
-is trained on ERA5 data from 1979 to 2015, we aim to train it on full length 1/4 degrees 
-Replay dataset coarsened to 1 degree. 
-The inputs, targets, and forcings used in this model are as follows:
+resolution, 13 pressure levels, and a smaller mesh. Like p0, we would benchmark the
+performance using weatherbench 2. Although we have plans to roll out the forecasts upto 
+10 days in advance, just like the original Graphcast, initial developments of this prototype 
+would focus on only 6 hr forecasts. Once this is achieved, the autoregressive steps will be 
+performed to produce longer lead time forecasts.
+
+# Training, testing, and validation
+The original `Graphcast_small` was trained on ERA5 data from 1979 to 2015, validated on 
+2016-2017, and tested on 2018-2021. We aim to split the available Replay dataset as 
+ - Training: 1994 - 2019
+ - Validation: 2022-23
+ - Test: 2020-2021
+
+The reason for the discontinuity in Training and Validation datasets is the fact that 
+weatherbench 2 uses 2020-21 for testing purposes, and thus it is not justified
+to include these years in the training/validation.  
 
 # INPUTS, TARGETS, and FORCINGS:
+The inputs, targets, and forcings used in this model are as follows: 
 
 * land-sea mask [static] 			- INPUT/FORCING
 * geopotential at surface [static] 		- INPUT/FORCING
@@ -25,49 +38,42 @@ The inputs, targets, and forcings used in this model are as follows:
 * top of atmosphere (toa) incident solar radiation [single]	- INPUT/FORCING
 * local time of the day [clock]					- INPUT/FORCING	
 * local time of the year [clock]				- INPUT/FORCING
- 
-# Pressure Levels
-13 native levels: 50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000 
 
-# Graphcast Model Configuration
-* `delta_t = 6 hr`:
-	The model time step
+Here, `static` means that the property is time independent, `single` means time-varying 
+single-level property (surface variables included), and `atmos` means time-varying
+multi-level atmospheric property.
+   
+# Configuration
+The model configuration and the details are provided in `p1.py`.
 
-* `target_lead_time = 6 hr`:
-	The model forecast lead time
+# Training
+For training this configuration, use `run_training.py` as 
 
-* `resolution = 1 degree`: 
-	Nominal spatial resolution
+```bash
+python train.py 
+```
 
-* `mesh_size = 5`:
-   	How many refinements to do on the multi-mesh
+# Normalization
+Unlike in p0, here we aim to compute our own per-pressure level mean and variance to 
+normalize the inputs to zero mean and unit standard deviation. 
 
-* `latent_size = 512`:
-	How many latent features to include in the various MLPs
+# Coarsening Replay Dataset
+The 1 degree Replay Dataset is only available for 5.5 years, which is not long enough for
+training. Therefore, we aim to use the 1/4 degree Replay data by coarsening it to 1 degree
+using subsampling, i.e., by picking every 4th point on the gaussian grid. One concern is that
+the dataset achieved in this fashing is not colocated with 1 degree gaussian grid in the
+latitudinal direction. This is something to just keep in mind, but this should not alter the 
+results qualitatively.
 
-* `gnn_msg_steps = 16`:
-	How many Graph Network message passing steps to do.
+# Ocean-Atmosphere Coupling 
+This would be pursued once the p1 prototype is up and running with the atmospheric dataset.
+The plan is to use the ocean variables alongside the atmospheric variables in the architecture.
+Similar to the atmospheric data, the ocean dataset also needs to be coarsened in this step.
+We plan to achieve this in a 2-step process as:
+ - Regrid 1/4 degree MOM6 tripolar grid data to 1/4 degree gaussian grid using the coupler
+ - Subsample 1/4 degree gaussian grid ocean data to coarsen it to 1 degree.
 
-* `hidden_layers = 1`:
-	Number of hidden layers for each MLP
-
-* `radius_query_fraction_edge_length = 0.6`:
-	Scalar that will be multiplied by the
-        length of the longest edge of the finest mesh to define the radius of
-        connectivity to use in the Grid2Mesh graph. Reasonable values are
-        between 0.6 and 1. 0.6 reduces the number of grid points feeding into
-        multiple mesh nodes and therefore reduces edge count and memory use, but
-        1 gives better predictions.
-
-* `mesh2grid_edge_normalization_factor = 0.6180 (approx.)`:
-	Allows explicitly controlling edge normalization for mesh2grid edges. 
-	If None, defaults to max edge length.This supports using pre-trained 
-	model weights with a different graph structure to what it was trained on.
-
-# Replay dataset details
-* `resolution = 1 degree`:
-	Obtained by coarsening the original 1/4 degree dataset by subsampling (TBD)
-
-* `training_dates = Dec 31, 1993 18:00:00 - Dec 31, 1994, 18:00:00`:
-	Training period (this will be changed as the new dataset becomes available), both dates
-	are inclusive
+Note that, in general, it's important to keep the resolution of the gaussian grid in the regrid step 
+high enough to avoid aliasing issues. Once we have captured most of small scale features on gaussian 
+grid, we can either subsample or coarsen by projecting on the spherical harmonics, truncate the total 
+wavenumber, and project back to the gaussian grid.

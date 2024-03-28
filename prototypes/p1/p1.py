@@ -75,13 +75,25 @@ class P1Emulator(ReplayEmulator):
     batch_size = 32
 
     # model config options
-    resolution = 1.0
-    mesh_size = 5
-    latent_size = 512
-    gnn_msg_steps = 16
-    hidden_layers = 1
-    radius_query_fraction_edge_length = 0.6
-    mesh2grid_edge_normalization_factor = 0.6180338738074472
+    resolution = 1.0            # nominal spatial resolution
+    
+    mesh_size = 5               # how many refinements to do on the multi-mesh
+    
+    latent_size = 512           # how many latent features to include in various MLPs
+    
+    gnn_msg_steps = 16          # how many graph network message passing steps to do
+    
+    hidden_layers = 1           # number of hidden layers for each MLP
+
+    radius_query_fraction_edge_length = 0.6  # Scalar that will be multiplied by the length of the longest edge of 
+                                             # the finest mesh to define the radius of connectivity to use in the 
+                                             # Grid2Mesh graph. Reasonable values are between 0.6 and 1. 0.6 reduces 
+                                             # the number of grid points feeding into multiple mesh nodes and therefore 
+                                             # reduces edge count and memory use, but gives better predictions.
+    
+    mesh2grid_edge_normalization_factor = 0.6180338738074472 # Allows explicitly controlling edge normalization for mesh2grid edges. 
+                                                             # If None, defaults to max edge length.This supports using pre-trained 
+                                                             # model weights with a different graph structure to what it was trained on. 
 
     # this is used for initializing the state in the gradient computation
     grad_rng_seed = 0
