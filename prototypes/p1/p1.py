@@ -89,7 +89,7 @@ class P1Emulator(ReplayEmulator):
     training_batch_rng_seed = 100
 
 tree_util.register_pytree_node(
-    P0Emulator,
-    P0Emulator._tree_flatten,
-    P0Emulator._tree_unflatten
+    P1Emulator,
+    P1Emulator._tree_flatten,
+    P1Emulator._tree_unflatten
 )
