@@ -30,28 +30,28 @@ The inputs, targets, and forcings used in this model are as follows:
 13 native levels: 50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000 
 
 # Graphcast Model Configuration
-* `delta_t` = 6 hr
-	the model time step
+* `delta_t = 6 hr`:
+	The model time step
 
-* `target_lead_time` = 6 hr
-	the model forecast lead time
+* `target_lead_time = 6 hr`:
+	The model forecast lead time
 
-* `resolution` = 1 degree 
-	nominal spatial resolution
+* `resolution = 1 degree`: 
+	Nominal spatial resolution
 
-* `mesh_size` = 5 
-   	how many refinements to do on the multi-mesh
+* `mesh_size = 5`:
+   	How many refinements to do on the multi-mesh
 
-* `latent_size` = 512
-	how many latent features to include in the various MLPs
+* `latent_size = 512`:
+	How many latent features to include in the various MLPs
 
-* `gnn_msg_steps` = 16
-	 how many Graph Network message passing steps to do.
+* `gnn_msg_steps = 16`:
+	How many Graph Network message passing steps to do.
 
-* `hidden_layers` = 1
-	number of hidden layers for each MLP
+* `hidden_layers = 1`:
+	Number of hidden layers for each MLP
 
-* `radius_query_fraction_edge_length` = 0.6
+* `radius_query_fraction_edge_length = 0.6`:
 	Scalar that will be multiplied by the
         length of the longest edge of the finest mesh to define the radius of
         connectivity to use in the Grid2Mesh graph. Reasonable values are
@@ -59,14 +59,15 @@ The inputs, targets, and forcings used in this model are as follows:
         multiple mesh nodes and therefore reduces edge count and memory use, but
         1 gives better predictions.
 
-* `mesh2grid_edge_normalization_factor` = 0.6180 (approx.)
+* `mesh2grid_edge_normalization_factor = 0.6180 (approx.)`:
 	Allows explicitly controlling edge normalization for mesh2grid edges. 
 	If None, defaults to max edge length.This supports using pre-trained 
 	model weights with a different graph structure to what it was trained on.
 
 # Replay dataset details
-* `resolution` = 1 degree
-	obtained by coarsening the original 1/4 degree dataset by subsampling (TBD)
+* `resolution = 1 degree`:
+	Obtained by coarsening the original 1/4 degree dataset by subsampling (TBD)
 
-* `training_dates` = Dec 31, 1993 18:00:00 - Dec 31, 1994, 18:00:00
-	both dates are inclusive (this will be changed as the new dataset becomes available)
+* `training_dates = Dec 31, 1993 18:00:00 - Dec 31, 1994, 18:00:00`:
+	Training period (this will be changed as the new dataset becomes available), both dates
+	are inclusive
