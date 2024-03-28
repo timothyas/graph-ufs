@@ -10,7 +10,7 @@ class P1Emulator(ReplayEmulator):
         "std": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/1.00-degree/03h-freq/normalization/stddev_by_level.p0.zarr",
         "stddiff": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/1.00-degree/03h-freq/normalization/diffs_stddev_by_level.p0.zarr",
     }
-    local_store_path = "./zarr-stores"
+    local_store_path = "./data"
 
     # these could be moved to a yaml file later
     # task config options
