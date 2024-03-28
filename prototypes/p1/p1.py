@@ -35,7 +35,7 @@ class P1Emulator(ReplayEmulator):
         "day_progress_cos",
     )
     target_variables = (
-        "delz"
+        "delz",
         "tmp2m",
         "pressfc",
         "ugrd10m",
