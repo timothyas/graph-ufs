@@ -33,6 +33,7 @@ from graphcast.normalization import InputsAndResiduals
 from graphcast.xarray_jax import unwrap_data
 from graphcast import rollout
 
+from tqdm import tqdm
 
 def construct_wrapped_graphcast(emulator):
     """Constructs and wraps the GraphCast Predictor object"""
@@ -91,7 +92,7 @@ def grads_fn(params, state, emulator, inputs, targets, forcings):
     return loss, diagnostics, next_state, grads
 
 
-def optimize(params, state, optimizer, emulator, input_batches, target_batches, forcing_batches, store_results=True, description="", license="", verbose=False):
+def optimize(params, state, optimizer, emulator, input_batches, target_batches, forcing_batches):
     """Optimize the model parameters by running through all optim_steps in data
 
     Args:
@@ -100,9 +101,6 @@ def optimize(params, state, optimizer, emulator, input_batches, target_batches, 
         optimizer (Callable, optax.optimizer): see `here <https://optax.readthedocs.io/en/latest/api/optimizers.html>`_
         emulator (ReplayEmulator): the emulator object
         input_batches, training_batches, forcing_batches (xarray.Dataset): with data needed for training
-        store_results (bool, optional): if True, store the loss values to netcdf and model checkpoint (optimized weights) using graphcast's storage routines
-        description, license (str, optional): information to store with the model checkpoint when writing out optimized weights, irrelevant if store_results is False
-        verbose (bool, optional): if True, print loss and mean(|gradient|) at each step
 
     Returns:
         params (dict): optimized model parameters
@@ -138,6 +136,9 @@ def optimize(params, state, optimizer, emulator, input_batches, target_batches, 
     loss_values = []
     loss_by_var = {k: list() for k in target_batches.data_vars}
 
+    iterations = input_batches["optim_step"].size
+    progress_bar = tqdm(total=iterations, desc="Processing")
+
     for k in input_batches["optim_step"].values:
 
         params, loss, diagnostics, opt_state, grads = optim_step_jitted(
@@ -153,25 +154,28 @@ def optimize(params, state, optimizer, emulator, input_batches, target_batches, 
         for key, val in diagnostics.items():
             loss_by_var[key].append(val)
 
-        if verbose:
-            mean_grad = np.mean(tree_util.tree_flatten(tree_util.tree_map(lambda x: np.abs(x).mean(), grads))[0])
-            print(f"Step = {k+1}, loss = {loss}, mean(|grad|) = {mean_grad}")
-            print("diagnostics: ")
-            print(diagnostics)
-            print()
+        mean_grad = np.mean(tree_util.tree_flatten(tree_util.tree_map(lambda x: np.abs(x).mean(), grads))[0])
+        progress_bar.set_description(f"loss = {loss:.9f}, mean(|grad|) = {mean_grad:.12f}")
+        progress_bar.update(1)
 
+    progress_bar.close()
+
+    # save losses for each batch
     loss_ds = xr.Dataset()
-    loss_ds["optim_step"] = input_batches["optim_step"]
+    loss_fname = os.path.join(emulator.local_store_path, "loss.nc")
+    previous_optim_steps = 0
+    if os.path.exists(loss_fname):
+        stored_loss_ds = xr.open_dataset(loss_fname)
+        previous_optim_steps = len(stored_loss_ds.optim_step)
+
+    loss_ds["optim_step"] = input_batches["optim_step"] + previous_optim_steps
     loss_ds.attrs["batch_size"] = len(input_batches["batch"])
     loss_ds["var_index"] = xr.DataArray(
         np.arange(len(loss_by_var)),
         coords={"var_index": np.arange(len(loss_by_var))},
         dims=("var_index",),
     )
-    loss_ds["var_names"] = xr.DataArray(
-        list(loss_by_var.keys()),
-        dims=("var_index",),
-    )
+    loss_ds["var_names"] = list(loss_by_var.keys())
     loss_ds["loss"] = xr.DataArray(
         loss_values,
         coords={"optim_step": loss_ds["optim_step"]},
@@ -183,23 +187,12 @@ def optimize(params, state, optimizer, emulator, input_batches, target_batches, 
         dims=("var_index", "optim_step"),
     )
 
-    if store_results:
-        loss_fname = os.path.join(emulator.local_store_path, "loss.nc")
-        print(f"Storing loss function values at: {loss_fname}")
-        loss_ds.to_netcdf(os.path.join(emulator.local_store_path, "loss.nc"))
-
-        # store parameters
-        ckpt = graphcast.CheckPoint(
-            params=params,
-            model_config=emulator.model_config,
-            task_config=emulator.task_config,
-            description=description,
-            license=license,
-        )
-        ckpt_fname = os.path.join(emulator.local_store_path, "graphufs.ckpt")
-        print(f"Storing model checkpoint at: {ckpt_fname}")
-        with open(ckpt_fname, "wb") as f:
-            dump(f, ckpt)
+    # concatenate losses and store
+    if os.path.exists(loss_fname):
+        stored_loss_ds = xr.concat([stored_loss_ds, loss_ds], dim='optim_step')
+    else:
+        stored_loss_ds = loss_ds
+    stored_loss_ds.to_netcdf(loss_fname)
 
     return params, loss_ds
 
@@ -230,11 +223,28 @@ def predict(
 
     apply_jitted = drop_state(with_params(jit(run_forward_loc.apply)))
 
-    predictions = rollout.chunked_prediction(
-        apply_jitted,
-        rng=PRNGKey(0),
-        inputs=input_batches,
-        targets_template=target_batches,
-        forcings=forcing_batches,
-    )
+    # process steps one by one
+    all_predictions = []
+
+    iterations = input_batches["optim_step"].size
+    progress_bar = tqdm(total=iterations, desc="Processing")
+
+    for k in input_batches["optim_step"].values:
+        predictions = rollout.chunked_prediction(
+            apply_jitted,
+            rng=PRNGKey(0),
+            inputs=input_batches.sel(optim_step=k),
+            targets_template=target_batches.sel(optim_step=k),
+            forcings=forcing_batches.sel(optim_step=k),
+        )
+
+        all_predictions.append(predictions)
+
+        progress_bar.update(1)
+
+    progress_bar.close()
+
+    # combine along "optim_step" dimension
+    predictions = xr.concat(all_predictions, dim="optim_step")
+
     return predictions

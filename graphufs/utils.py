@@ -3,22 +3,22 @@ from jax import jit
 from jax.random import PRNGKey
 import threading
 from graphufs import run_forward
+from ufs2arco.timer import Timer
 
 
-def get_chunk_data(gufs, data: dict, n_batches: int = 4, random_sample: bool = True):
+def get_chunk_data(generator, data: dict):
     """Get multiple training batches.
 
     Args:
-        gufs: emulator class
+        generator: chunk generator object
         data (List[3]): A list containing the [inputs, targets, forcings]
-        n_batches (int): Number of batches we want to read
     """
-    print("Preparing Batches from Replay on GCS")
 
-    inputs, targets, forcings, inittimes = gufs.get_training_batches(
-        n_optim_steps=n_batches,
-        random_sample=random_sample,
-    )
+    # get batches from replay on GCS
+    try:
+        inputs, targets, forcings, inittimes = next(generator)
+    except StopIteration:
+        return
 
     # load into ram
     inputs.load()
@@ -26,6 +26,7 @@ def get_chunk_data(gufs, data: dict, n_batches: int = 4, random_sample: bool = T
     forcings.load()
     inittimes.load()
 
+    # update dictionary
     data.update(
         {
             "inputs": inputs,
@@ -35,39 +36,64 @@ def get_chunk_data(gufs, data: dict, n_batches: int = 4, random_sample: bool = T
         }
     )
 
-    print("Finished preparing batches")
-
 
 def get_chunk_in_parallel(
-    gufs, data: dict, data_0: dict, input_thread, it: int, args: dict
+    generator, data: dict, data_0: dict, input_thread, first_chunk: bool
 ) -> threading.Thread:
     """Get a chunk of data in parallel with optimization/prediction. This keeps
     two big chunks (data and data_0) in RAM.
 
     Args:
-        gufs: emulator class
+        generator: chunk generator object
         data (dict): the data being used by optimization/prediction process
         data_0 (dict): the data currently being fetched/processed
         input_thread: the input thread
-        it: chunk number, it < 0 indicates first chunk
-        args: CLI arguments
+        first_chunk: is this the first chunk?
     """
     # make sure input thread finishes before copying data_0 to data
-    if it >= 0:
+    if not first_chunk:
         input_thread.join()
         for k, v in data_0.items():
             data[k] = v
-    # don't prefetch a chunk on the last iteration
-    if it < args.chunks_per_epoch - 1:
-        input_thread = threading.Thread(
-            target=get_chunk_data,
-            args=(gufs, data_0, args.batches_per_chunk, False) # not args.test), # training needs to be done with unshuffled dataset as well?
-        )
-        input_thread.start()
+    # get data
+    input_thread = threading.Thread(
+        target=get_chunk_data,
+        args=(generator, data_0),
+    )
+    input_thread.start()
     # for first chunk, wait until input thread finishes
-    if it < 0:
+    if first_chunk:
         input_thread.join()
     return input_thread
+
+
+class DataGenerator:
+    """Data generator class"""
+
+    def __init__(self, emulator, mode: str, download_data: bool, n_optim_steps: int = None):
+        self.data = {}
+        self.data_0 = {}
+        self.input_thread = None
+
+        self.gen = emulator.get_batches(
+            n_optim_steps=n_optim_steps,
+            mode=mode,
+            download_data=download_data,
+        )
+        self.first_chunk = True
+        self.generate()
+
+    def generate(self):
+        self.input_thread = get_chunk_in_parallel(
+            self.gen, self.data, self.data_0, self.input_thread, self.first_chunk
+        )
+        self.first_chunk = False
+
+    def get_data(self):
+        if self.data:
+            return self.data;
+        else:
+            return self.data_0;
 
 
 def init_model(gufs, data: dict):
@@ -81,18 +107,19 @@ def init_model(gufs, data: dict):
     params, state = init_jitted(
         rng=PRNGKey(gufs.init_rng_seed),
         emulator=gufs,
-        inputs=data["inputs"].sel(batch=[0]),
-        targets_template=data["targets"].sel(batch=[0]),
-        forcings=data["forcings"].sel(batch=[0]),
+        inputs=data["inputs"].sel(optim_step=0),
+        targets_template=data["targets"].sel(optim_step=0),
+        forcings=data["forcings"].sel(optim_step=0),
     )
     return params, state
 
 
-def load_checkpoint(ckpt_path: str):
+def load_checkpoint(ckpt_path: str, verbose: bool = False):
     """Load checkpoint.
 
     Args:
         ckpt_path (str): path to model
+        verbose (bool, optional): print metadata about the model
     """
     with open(ckpt_path, "rb") as f:
         ckpt = checkpoint.load(f, graphcast.CheckPoint)
@@ -100,8 +127,9 @@ def load_checkpoint(ckpt_path: str):
     state = {}
     model_config = ckpt.model_config
     task_config = ckpt.task_config
-    print("Model description:\n", ckpt.description, "\n")
-    print("Model license:\n", ckpt.license, "\n")
+    if verbose:
+        print("Model description:\n", ckpt.description, "\n")
+        print("Model license:\n", ckpt.license, "\n")
     return params, state
 
 

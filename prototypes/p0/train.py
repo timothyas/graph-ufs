@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import shutil
 from functools import partial
@@ -7,8 +8,7 @@ import optax
 from graphufs import (
     optimize,
     predict,
-    get_chunk_data,
-    get_chunk_in_parallel,
+    DataGenerator,
     init_model,
     load_checkpoint,
     save_checkpoint,
@@ -22,16 +22,16 @@ from simple_emulator import P0Emulator
 """
 Script to train and test graphufs over multiple chunks and epochs
 
-Example usage:
+Usage:
 
-    python3 train.py --chunks-per-epoch 2 --batches-per-chunk 1 --latent-size 32
+    python3 -W ignore train.py --num-epochs 2 --chunks-per-epoch 2 --latent-size 32 --training-dates "1994-01-01T00" "1994-01-31T18"
 
-    This will train networks over 2 chunks where each chunk goes through 16 steps
-    with a batch size of 1. You should get 10 checkpoints after training completes.
+    This will train networks for 2 epochs with 2 chunks per epoch with training dataset of first month of 1994.
+    You should get 4 models (checkpoints) after training completes.
 
-    Later, you can evaluate a specific model by specifying model id
+    Later, you can evaluate a specific model by specifying model id, and testing dataset range i.e. first month of 1995
 
-    python3 train.py --chunks-per-epoch 1 --batches-per-chunk 1 --latent-size 32 --test --id 1
+    python3 -W ignore train.py --chunks-per-epoch 2 --latent-size 32 --test --id 3 --testing-dates  "1995-01-01T00"  "1995-01-31T18"
 """
 
 
@@ -58,17 +58,37 @@ def parse_args():
     )
 
     # add options from P0Emulator
+    # Todo: Handle dictionaries
     for k, v in vars(P0Emulator).items():
         if not k.startswith("__"):
             name = "--" + k.replace("_", "-")
-            parser.add_argument(
-                name,
-                dest=k,
-                required=False,
-                type=type(v),
-                default=v,
-                help=f"{k}: default {v}",
-            )
+            if v is None:
+                parser.add_argument(
+                    name,
+                    dest=k,
+                    required=False,
+                    type=int,
+                    help=f"{k}: default {v}",
+                )
+            elif isinstance(v, (tuple, list)) and len(v):
+                tp = type(v[0])
+                parser.add_argument(
+                    name,
+                    dest=k,
+                    required=False,
+                    nargs="+",
+                    type=tp,
+                    help=f"{k}: default {v}",
+                )
+            else:
+                parser.add_argument(
+                    name,
+                    dest=k,
+                    required=False,
+                    type=type(v),
+                    default=v,
+                    help=f"{k}: default {v}",
+                )
 
     # parse CLI args
     args = parser.parse_args()
@@ -81,7 +101,7 @@ def parse_args():
             if hasattr(P0Emulator, arg_name):
                 stored = getattr(P0Emulator, arg_name)
                 if stored is not None:
-                    attr_type = type(getattr(P0Emulator, arg_name))
+                    attr_type = type(stored)
                     value = attr_type(value)
                 setattr(P0Emulator, arg_name, value)
 
@@ -93,6 +113,9 @@ if __name__ == "__main__":
     # parse arguments
     args = parse_args()
 
+    # turn off absl warnings
+    logging.getLogger("absl").setLevel(logging.CRITICAL)
+
     # initialize emulator and open dataset
     walltime = Timer()
     localtime = Timer()
@@ -100,22 +123,26 @@ if __name__ == "__main__":
     # initialize emulator
     gufs = P0Emulator()
 
-    # get the first chunk of data
-    data = {}
-    data_0 = {}
-    input_thread = None
-    input_thread = get_chunk_in_parallel(gufs, data, data_0, input_thread, -1, args)
+    # data generators
+    generator = DataGenerator(
+        emulator=gufs,
+        download_data=True,
+        n_optim_steps=gufs.steps_per_chunk,
+        mode="testing" if args.test else "training",
+    )
 
     # load weights or initialize a random model
+    checkpoint_dir = f"{gufs.local_store_path}/models"
     ckpt_id = args.id
-    ckpt_path = f"{args.checkpoint_dir}/model_{ckpt_id}.npz"
+    ckpt_path = f"{checkpoint_dir}/model_{ckpt_id}.npz"
 
     if os.path.exists(ckpt_path):
-        localtime.start("Loading weights")
+        localtime.start(f"Loading weights: {ckpt_path}")
         params, state = load_checkpoint(ckpt_path)
     else:
         localtime.start("Initializing Optimizer and Parameters")
-        params, state = init_model(gufs, data_0)
+        data = generator.get_data()  # just to figure out shapes
+        params, state = init_model(gufs, data)
     localtime.stop()
 
     # training
@@ -123,23 +150,21 @@ if __name__ == "__main__":
         walltime.start("Starting Training")
 
         # create checkpoint directory
-        if not os.path.exists(args.checkpoint_dir):
-            os.mkdir(args.checkpoint_dir)
+        if not os.path.exists(checkpoint_dir):
+            os.mkdir(checkpoint_dir)
 
         optimizer = optax.adam(learning_rate=1e-4)
 
         # training loop
-        for e in range(args.num_epochs):
-            for it in range(args.chunks_per_epoch):
+        for e in range(gufs.num_epochs):
+            for c in range(gufs.chunks_per_epoch):
+                print(f"Training on epoch {e} and chunk {c}")
 
                 # get chunk of data in parallel with NN optimization
-                input_thread = get_chunk_in_parallel(
-                    gufs, data, data_0, input_thread, it, args
-                )
+                generator.generate()
+                data = generator.get_data()
 
                 # optimize
-                localtime.start("Starting Optimization")
-
                 params, loss = optimize(
                     params=params,
                     state=state,
@@ -150,13 +175,20 @@ if __name__ == "__main__":
                     forcing_batches=data["forcings"],
                 )
 
-                localtime.stop()
-
                 # save weights
-                if it % args.checkpoint_chunks == 0:
-                    ckpt_id = it // args.checkpoint_chunks
-                    ckpt_path = f"{args.checkpoint_dir}/model_{ckpt_id}.npz"
+                if c % gufs.checkpoint_chunks == 0:
+                    ckpt_id = (e * gufs.chunks_per_epoch + c) // gufs.checkpoint_chunks
+                    ckpt_path = f"{checkpoint_dir}/model_{ckpt_id}.npz"
                     save_checkpoint(gufs, params, ckpt_path)
+
+            # reset generator at the end of an epoch
+            if e != gufs.num_epochs - 1:
+                generator = DataGenerator(
+                    emulator=gufs,
+                    download_data=False,
+                    n_optim_steps=gufs.steps_per_chunk,
+                    mode="training",
+                )
 
     # testing
     else:
@@ -171,12 +203,12 @@ if __name__ == "__main__":
             shutil.rmtree(targets_zarr_name)
 
         stats = {}
-        for it in range(args.chunks_per_epoch):
+        for c in range(gufs.chunks_per_epoch):
+            print(f"Testing on chunk {c}")
 
             # get chunk of data in parallel with inference
-            input_thread = get_chunk_in_parallel(
-                gufs, data, data_0, input_thread, it, args
-            )
+            generator.generate()
+            data = generator.get_data()
 
             # run predictions
             predictions = predict(
@@ -191,15 +223,15 @@ if __name__ == "__main__":
             # Compute rmse and bias comparing targets and predictions
             targets = data["targets"]
             inittimes = data["inittimes"]
-            compute_rmse_bias(predictions, targets, stats, it)
+            compute_rmse_bias(predictions, targets, stats, c)
 
             # write chunk by chunk to avoid storing all of it in memory
             predictions = convert_wb2_format(gufs, predictions, inittimes)
-            predictions.to_zarr(predictions_zarr_name, mode="a")
+            predictions.to_zarr(predictions_zarr_name, append_dim="time" if c else None)
 
             # write also targets to compute metrics against it with wb2
             targets = convert_wb2_format(gufs, targets, inittimes)
-            targets.to_zarr(targets_zarr_name, mode="a")
+            targets.to_zarr(targets_zarr_name, append_dim="time" if c else None)
 
         print("--------- Statistiscs ---------")
         for k, v in stats.items():

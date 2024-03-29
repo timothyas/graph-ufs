@@ -51,8 +51,16 @@ class P0Emulator(ReplayEmulator):
     input_duration = "6h 1s"    # time covered by initial condition(s), note the 1s is necessary for GraphCast code
     target_lead_time = "6h"     # how long is the forecast ... at what point do we compare model to targets
     training_dates = (          # bounds of training data (inclusive)
-        "1993-12-31T18",        # start
-        "1994-12-31T18"         # stop, includes all of 1994
+        "1994-01-01T00",        # start
+        "1994-12-31T18"         # stop
+    )
+    testing_dates = (           # bounds of testing data (inclusive)
+        "1995-01-01T00",        # start
+        "1995-12-31T18"         # stop
+    )
+    validation_dates = (        # bounds of validation data (inclusive)
+        "1996-01-01T00",        # start
+        "1996-12-31T18"         # stop
     )
 
     # training protocol
@@ -75,9 +83,8 @@ class P0Emulator(ReplayEmulator):
 
     # data chunking options
     chunks_per_epoch = 1
-    batches_per_chunk = 1
+    steps_per_chunk = None
     checkpoint_chunks = 1
-    checkpoint_dir = "./nets"
 
 tree_util.register_pytree_node(
     P0Emulator,
