@@ -25,7 +25,7 @@ class ReplayEmulator:
         "stddiff": "",
     }
     wb2_obs_url = ""
-    
+
     local_store_path = None
 
     # these could be moved to a yaml file later
@@ -101,6 +101,56 @@ class ReplayEmulator:
         self.norm = {}
         self.norm["mean"], self.norm["std"], self.norm["stddiff"] = self.load_normalization()
 
+        # convert some types
+        self.delta_t = pd.Timedelta(self.delta_t)
+        self.input_duration = pd.Timedelta(self.input_duration)
+
+
+    @property
+    def time_per_forecast(self):
+        return self.target_lead_time + self.input_duration
+
+    @property
+    def n_input(self):
+        """Number of steps that initial condition(s) cover"""
+        return self.input_duration // self.delta_t
+
+    @property
+    def n_forecast(self):
+        """Number of steps covered by a single forecast, including initial condition(s)"""
+        return self.time_per_forecast // self.delta_t
+
+
+    def open_dataset(self, **kwargs):
+        xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"}, **kwargs)
+        return xds
+
+
+    def get_time(self, mode):
+        # choose dates based on mode
+        if mode == "training":
+            start = self.training_dates[ 0]
+            end   = self.training_dates[-1]
+        elif mode == "testing":
+            start = self.testing_dates[ 0]
+            end   = self.testing_dates[-1]
+        elif mode == "validation":
+            start = self.validation_dates[ 0]
+            end   = self.validation_dates[-1]
+        else:
+            raise ValueError("Unknown mode: make sure it is either training/testing/validation")
+
+        # build time vector based on the model, not the data
+        start = pd.Timestamp(start)
+        end   = pd.Timestamp(end)
+        time = pd.date_range(
+            start=start,
+            end=end,
+            freq=self.delta_t,
+            inclusive="both",
+        )
+        return time
+
 
     def subsample_dataset(self, xds, new_time=None):
         """Get the subset of the data that we want in terms of time, vertical levels, and variables
@@ -126,7 +176,7 @@ class ReplayEmulator:
         return xds
 
 
-    def preprocess(self, xds, batch_index=0, drop_cftime=True):
+    def preprocess(self, xds, batch_index=None, drop_cftime=True):
         """Prepare a single batch for GraphCast
 
         Args:
@@ -153,10 +203,11 @@ class ReplayEmulator:
 
         bds["time"] = (bds.datetime - bds.datetime[0])
         bds = bds.swap_dims({"datetime": "time"}).reset_coords()
-        bds = bds.expand_dims({
-            "batch": [batch_index],
-        })
         bds = bds.set_coords(["datetime"])
+        if batch_index is not None:
+            bds = bds.expand_dims({
+                "batch": [batch_index],
+            })
 
         # cftime is a data_var not a coordinate, but if it's made to be a coordinate
         # it causes crazy JAX problems when making predictions with graphufs.training.run_forward.apply
@@ -196,29 +247,10 @@ class ReplayEmulator:
             xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
         else:
             xds = xr.open_zarr(local_data_path)
-        # choose dates based on mode
-        if mode == "training":
-            start = self.training_dates[ 0]
-            end   = self.training_dates[-1]
-        elif mode == "testing":
-            start = self.testing_dates[ 0]
-            end   = self.testing_dates[-1]
-        elif mode == "validation":
-            start = self.validation_dates[ 0]
-            end   = self.validation_dates[-1]
-        else:
-            raise ValueError("Unknown mode: make sure it is either training/testing/validation")
 
-        # build time vector based on the model, not the data
-        delta_t = pd.Timedelta(self.delta_t)
-        start = pd.Timestamp(start)
-        end   = pd.Timestamp(end)
-        all_new_time = pd.date_range(
-            start=start,
-            end=end,
-            freq=delta_t,
-            inclusive="both",
-        )
+        # choose dates based on mode
+        all_new_time = self.get_time(mode=mode)
+
         # subsample in time, grab variables and vertical levels we want
         all_xds = self.subsample_dataset(xds, new_time=all_new_time)
 
@@ -242,11 +274,9 @@ class ReplayEmulator:
             end = new_time[-1]
 
             # figure out duration of IC(s), forecast, all of training
-            input_duration = pd.Timedelta(self.input_duration)
-            time_per_forecast = self.target_lead_time + input_duration
-            training_duration = end - start
+            data_duration = end - start
 
-            n_max_forecasts = (training_duration - input_duration) // delta_t
+            n_max_forecasts = (data_duration - self.input_duration) // self.delta_t
             n_max_optim_steps = n_max_forecasts // self.batch_size
             n_optim_steps = n_max_optim_steps if n_optim_steps is None else n_optim_steps
             n_forecasts = n_optim_steps * self.batch_size
@@ -261,8 +291,8 @@ class ReplayEmulator:
             # this has to end such that we can pull an entire forecast from the training data
             all_initial_times = pd.date_range(
                 start=start,
-                end=end - time_per_forecast,
-                freq=delta_t,
+                end=end - self.time_per_forecast,
+                freq=self.delta_t,
                 inclusive="both",
             )
 
@@ -279,7 +309,7 @@ class ReplayEmulator:
                 forecast_initial_times = all_initial_times[:n_forecasts]
 
             # warnings before we get started
-            if pd.Timedelta(self.target_lead_time) > delta_t:
+            if pd.Timedelta(self.target_lead_time) > self.delta_t:
                 warnings.warn("ReplayEmulator.get_training_batches: need to rework this to pull targets for all steps at delta_t intervals between initial conditions and target_lead times, at least in part because we need the forcings at each delta_t time step, and the data extraction code only pulls this at each specified target_lead_time")
 
             # load the dataset in to avoid lots of calls... need to figure out how to do this best
@@ -301,8 +331,8 @@ class ReplayEmulator:
 
                 timestamps_in_this_forecast = pd.date_range(
                     start=forecast_initial_times[i],
-                    end=forecast_initial_times[i]+time_per_forecast,
-                    freq=delta_t,
+                    end=forecast_initial_times[i]+self.time_per_forecast,
+                    freq=self.delta_t,
                     inclusive="both",
                 )
                 batch = self.preprocess(
@@ -358,6 +388,7 @@ class ReplayEmulator:
                 xds = xr.open_zarr(self.norm_urls[component], **kwargs)
                 myvars = list(x for x in self.all_variables if x in xds)
                 xds = xds[myvars]
+                xds = xds.sel(pfull=list(self.pressure_levels), method="nearest")
                 xds = xds.load()
                 xds = xds.rename({"pfull": "level"})
                 xds.to_zarr(local_path)
@@ -388,6 +419,14 @@ class ReplayEmulator:
         diffs_stddev_by_level['day_progress'] = 0.4330127018922193
         diffs_stddev_by_level['day_progress_sin'] = 0.9999999974440369
         diffs_stddev_by_level['day_progress_cos'] = 1.0
+
+        # need to add this one more time since the above hack has
+        # e.g. year_progress  and the sin/cos version, and we just want sin/cos version
+        # note that this can also be deleted once the hack is deleted
+        myvars = list(x for x in self.all_variables if x in mean_by_level)
+        mean_by_level = mean_by_level[myvars]
+        stddev_by_level = stddev_by_level[myvars]
+        diffs_stddev_by_level = diffs_stddev_by_level[myvars]
 
         return mean_by_level, stddev_by_level, diffs_stddev_by_level
 
