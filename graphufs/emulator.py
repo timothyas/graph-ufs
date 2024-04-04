@@ -1,6 +1,8 @@
 import os
+import math
 import yaml
 import warnings
+import random
 import itertools
 import dataclasses
 import numpy as np
@@ -173,7 +175,7 @@ class ReplayEmulator:
         n_optim_steps=None,
         drop_cftime=True,
         mode="training",
-        download_data=True,
+        allow_overlapped_chunks=None,
     ):
         """Get a dataset with all the batches of data necessary for training
 
@@ -184,7 +186,7 @@ class ReplayEmulator:
             n_optim_steps (int, optional): number of training batches to grab ... number of times we will update the parameters during optimization. If not specified, use as many as are available based on the available training data.
             drop_cftime (bool, optional): may be useful for debugging
             mode (str, optional): can be either "training", "validation" or "testing"
-            download_data (bool, optional): download data from GCS
+            allow_overlapped_chunks (bool, optional): overlapp chunks
         Returns:
             inputs, targets, forcings (xarray.Dataset): with new dimension "batch"
                 and appropriate fields for each dataset, based on the variables in :attr:`task_config`
@@ -192,20 +194,21 @@ class ReplayEmulator:
         # grab the dataset and subsample training portion at desired model time step
         # second epoch onwards should be able to read data locally
         local_data_path = os.path.join(self.local_store_path, "data.zarr")
-        if download_data:
-            xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
-        else:
-            xds = xr.open_zarr(local_data_path)
+        xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
+
         # choose dates based on mode
         if mode == "training":
             start = self.training_dates[ 0]
             end   = self.training_dates[-1]
+            if allow_overlapped_chunks is None: allow_overlapped_chunks = False
         elif mode == "testing":
             start = self.testing_dates[ 0]
             end   = self.testing_dates[-1]
+            allow_overlapped_chunks = True
         elif mode == "validation":
             start = self.validation_dates[ 0]
             end   = self.validation_dates[-1]
+            if allow_overlapped_chunks is None: allow_overlapped_chunks = False
         else:
             raise ValueError("Unknown mode: make sure it is either training/testing/validation")
 
@@ -219,20 +222,47 @@ class ReplayEmulator:
             freq=delta_t,
             inclusive="both",
         )
+
         # subsample in time, grab variables and vertical levels we want
         all_xds = self.subsample_dataset(xds, new_time=all_new_time)
+
+        # download only missing dates and write them to disk
+        if os.path.exists(local_data_path):
+            # figure out missing dates
+            xds_on_disk = xr.open_zarr(local_data_path)
+            missing_dates = set(all_xds.time.values) - set(xds_on_disk.time.values)
+            xds_on_disk.close()
+            print(f"Downloading missing data for {len(missing_dates)} time stamps.")
+            # download and write missing dates to disk
+            missing_xds = all_xds.sel(time=list(missing_dates))
+            missing_xds.to_zarr(local_data_path, append_dim="time")
+            # now that the data on disk is complete, reopen the dataset from disk
+            all_xds.close()
+            all_xds = xr.open_zarr(local_data_path)
+        else:
+            print(f"Downloading missing data for {len(all_xds.time.values)} time stamps.")
+            all_xds.to_zarr(local_data_path)
 
         # split dataset into chunks
         chunk_size = len(all_new_time) // self.chunks_per_epoch
         all_new_time_chunks = []
+
+        # overlap chunks by lead time + input duration
+        overlap_step = (self.target_lead_time + self.input_duration) // delta_t if allow_overlapped_chunks else 0
         for i in range(self.chunks_per_epoch):
             if i == self.chunks_per_epoch - 1:
                 all_new_time_chunks.append(all_new_time[i * chunk_size:len(all_new_time)])
             else:
-                all_new_time_chunks.append(all_new_time[i * chunk_size:(i + 1) * chunk_size])
+                all_new_time_chunks.append(all_new_time[i * chunk_size:(i + 1) * chunk_size + overlap_step])
+
+        # shuffle chunks
+        if mode != "testing":
+            random.shuffle(all_new_time_chunks)
+
+        # print chunk boundaries
         print(f"Chunks total: {len(all_new_time_chunks)}")
         for chunk_id, new_time in enumerate(all_new_time_chunks):
-            print(f"Chunk {chunk_id}: {new_time[0]} to {new_time[-1]}")
+            print(f"Chunk {chunk_id}: {new_time[0]} to {new_time[-1]} : {len(new_time)} time stamps")
 
         # iterate over all chunks
         for chunk_id, new_time in enumerate(all_new_time_chunks):
@@ -247,9 +277,10 @@ class ReplayEmulator:
             training_duration = end - start
 
             n_max_forecasts = (training_duration - input_duration) // delta_t
-            n_max_optim_steps = n_max_forecasts // self.batch_size
+            n_max_optim_steps = math.ceil(n_max_forecasts / self.batch_size)
             n_optim_steps = n_max_optim_steps if n_optim_steps is None else n_optim_steps
             n_forecasts = n_optim_steps * self.batch_size
+            n_forecasts = min(n_forecasts, n_max_forecasts)
 
             # note that this max can be violated if we sample with replacement ...
             # but I'd rather just work with epochs and use all the data
@@ -286,9 +317,8 @@ class ReplayEmulator:
 
             # subsample in time, grab variables and vertical levels we want
             xds = self.subsample_dataset(all_xds, new_time=new_time)
-            if download_data:
-                xds.to_zarr(local_data_path, append_dim="time" if os.path.exists(local_data_path) else None)
 
+            # load into RAM
             xds = xds.load();
 
             inputs = []
@@ -298,6 +328,21 @@ class ReplayEmulator:
             for i, (k, b) in enumerate(
                 itertools.product(range(n_optim_steps), range(self.batch_size))
             ):
+
+                if i >= n_max_forecasts:
+                    # If the last batch won't be full, take values from the previous batch and complete it.
+                    # Do this only for training, because in testing mode this process will mess up the output.
+                    # For testing, we will cleanup after prediction using dropna()
+                    def copy_values(ds_list):
+                        mds = ds_list[-self.batch_size].copy()
+                        mds["optim_step"] = [k]
+                        ds_list.append(mds)
+                    if mode != "testing":
+                        copy_values(inputs)
+                        copy_values(targets)
+                        copy_values(forcings)
+                        copy_values(inittimes)
+                    continue
 
                 timestamps_in_this_forecast = pd.date_range(
                     start=forecast_initial_times[i],

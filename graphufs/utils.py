@@ -70,7 +70,7 @@ def get_chunk_in_parallel(
 class DataGenerator:
     """Data generator class"""
 
-    def __init__(self, emulator, mode: str, download_data: bool, n_optim_steps: int = None):
+    def __init__(self, emulator, mode: str, n_optim_steps: int = None):
         self.data = {}
         self.data_0 = {}
         self.input_thread = None
@@ -78,7 +78,6 @@ class DataGenerator:
         self.gen = emulator.get_batches(
             n_optim_steps=n_optim_steps,
             mode=mode,
-            download_data=download_data,
         )
         self.first_chunk = True
         self.generate()
@@ -150,3 +149,70 @@ def save_checkpoint(gufs, params, ckpt_path: str) -> None:
             license="Public domain",
         )
         checkpoint.dump(f, ckpt)
+
+def add_emulator_arguments(emulator, parser) -> None:
+    """Add settings in Emulator class into CLI argument parser
+
+    Args:
+        emulator: emulator class
+        parser (argparse.ArgumentParser): argument parser
+    """
+    for k, v in vars(emulator).items():
+        if not k.startswith("__"):
+            name = "--" + k.replace("_", "-")
+            if v is None:
+                parser.add_argument(
+                    name,
+                    dest=k,
+                    required=False,
+                    type=int,
+                    help=f"{k}: default {v}",
+                )
+            elif isinstance(v, (tuple, list)) and len(v):
+                tp = type(v[0])
+                parser.add_argument(
+                    name,
+                    dest=k,
+                    required=False,
+                    nargs="+",
+                    type=tp,
+                    help=f"{k}: default {v}",
+                )
+            elif isinstance(v,dict) and len(v):
+                parser.add_argument(
+                    name,
+                    dest=k,
+                    required=False,
+                    nargs="+",
+                    help=f"{k}: default {v}",
+                )
+            else:
+                parser.add_argument(
+                    name,
+                    dest=k,
+                    required=False,
+                    type=type(v),
+                    default=v,
+                    help=f"{k}: default {v}",
+                )
+
+def set_emulator_options(emulator, args) -> None:
+    """Set settings in Emulator class from CLI arguments
+
+    Args:
+        emulator: emulator class
+        args: dictionary of CLI arguments
+    """
+    for arg in vars(args):
+        value = getattr(args, arg)
+        if value is not None:
+            arg_name = arg.replace("-", "_")
+            if hasattr(emulator, arg_name):
+                stored = getattr(emulator, arg_name)
+                if isinstance(stored,dict):
+                    value = {s.split(':')[0]: s.split(':')[1] for s in value}
+                elif stored is not None:
+                    attr_type = type(stored)
+                    value = attr_type(value)
+                setattr(emulator, arg_name, value)
+
