@@ -8,6 +8,7 @@ import pandas as pd
 import xarray as xr
 from jax import tree_util
 
+from ufs2arco.regrid.ufsregridder import UFSRegridder
 from graphcast.graphcast import ModelConfig, TaskConfig
 from graphcast.data_utils import extract_inputs_targets_forcings
 
@@ -35,6 +36,8 @@ class ReplayEmulator:
     forcing_variables = tuple()
     all_variables = tuple() # this is created in __init__
     pressure_levels = tuple()
+    latitude = tuple()
+    longitude = tuple()
 
     # time related
     delta_t = None              # the model time step
@@ -73,6 +76,9 @@ class ReplayEmulator:
             warnings.warng("ReplayEmulator.__init__: no local_store_path set, data will always be accessed remotely. Proceed with patience.")
 
         pfull = self._get_replay_vertical_levels()
+        latitude, longitude = self._get_replay_grid(self.resolution)
+        self.latitude = tuple(float(x) for x in latitude)
+        self.longitude = tuple(float(x) for x in longitude)
         levels = pfull.sel(
             pfull=list(self.pressure_levels),
             method="nearest",
@@ -92,6 +98,8 @@ class ReplayEmulator:
             forcing_variables=self.forcing_variables,
             pressure_levels=levels,
             input_duration=self.input_duration,
+            longitude=self.longitude,
+            latitude=self.latitude,
         )
 
         self.all_variables = tuple(set(
@@ -437,6 +445,22 @@ class ReplayEmulator:
         with open(pfull_path, "r") as f:
             pfull = yaml.safe_load(f)["pfull"]
         return xr.DataArray(pfull, coords={"pfull": pfull}, dims="pfull")
+
+    def _get_replay_grid(self, resolution: int | float):
+        if int(resolution) == 1:
+            if "0.25-degree-subsampled" in self.data_url:
+                lats, lons = UFSRegridder.compute_gaussian_grid(768, 1536)
+                lats = lats[::4]
+                lons = lons[::4]
+            else:
+                lats, lons = UFSRegridder.compute_gaussian_grid(192, 384)
+
+        elif int(resolution*100) == 25:
+            lats, lons = UFSRegridder.compute_gaussian_grid(768, 1536)
+        else:
+            raise NotImplementedError("Resolution not available in Replay data")
+        return lats, lons
+
 
     def combine_chunk(self, ds_list):
         """Used by the training batch creation code to combine many datasets for optimization"""
