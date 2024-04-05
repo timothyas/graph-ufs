@@ -459,6 +459,7 @@ class ReplayEmulator:
             lats, lons = UFSRegridder.compute_gaussian_grid(768, 1536)
         else:
             raise NotImplementedError("Resolution not available in Replay data")
+        lats = lats[::-1]
         return lats, lons
 
 
