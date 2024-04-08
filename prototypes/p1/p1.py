@@ -22,7 +22,7 @@ class P1Emulator(ReplayEmulator):
         "pressfc", # mean sea level pressure
         "ugrd10m", # 10m u component of wind
         "vgrd10m", # 10m v component of wind
-        "tprcp",  # total precipitation 3hr, we need 6 hrs though
+        "prateb_ave",  # total precipitation 3hr
         "dswrf_avetoa", # toa incident solar radiation
         "tmp", # temperature
         "ugrd", # u component of wind
