@@ -5,7 +5,7 @@ a smaller, low-resolution version of GraphCast that uses 1 degree spatial
 resolution, 13 pressure levels, and a smaller mesh. Like p0, we would benchmark the
 performance using weatherbench 2. Although we have plans to roll out the forecasts upto 
 10 days in advance, just like the original Graphcast, initial developments of this prototype 
-would focus on only 6 hr forecasts. Once this is achieved, the autoregressive steps will be 
+would focus on only 3 hr forecasts. Once this is achieved, the autoregressive steps will be 
 performed to produce longer lead time forecasts.
 
 # Training, testing, and validation
