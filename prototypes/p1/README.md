@@ -34,7 +34,7 @@ The inputs, targets, and forcings used in this model are as follows:
 * mean sea level pressure [single]			- INPUT/TARGET
 * 10m u component of wind [single]			- INPUT/TARGET
 * 10m v component of wind [single]			- INPUT/TARGET
-* total precipitation 3hr (we need 6 hrs though) [single]	- INPUT/TARGET
+* total precipitation 3hr [single]	- INPUT/TARGET
 * top of atmosphere (toa) incident solar radiation [single]	- INPUT/FORCING
 * local time of the day [clock]					- INPUT/FORCING	
 * local time of the year [clock]				- INPUT/FORCING
