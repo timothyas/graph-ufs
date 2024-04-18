@@ -1,4 +1,4 @@
-name: graphufs
+name: modulus
 channels:
     - conda-forge
     - nvidia
@@ -24,23 +24,18 @@ dependencies:
     - gcsfs
 # graphcast
     - cartopy
-    - chex
-    - google-colab
-    - dm-haiku
-    - jax
-    - jaxlib=*=*cuda*
     - cuda-nvcc
-    - optax
-    - jraph
     - pandas
-    - rtree
-    - dm-tree
-    - trimesh
-    - typing_extensions
     - google-api-python-client
 # WeatherBench2
     - apache-beam
     - xarray-beam
     - xesmf
+    - pytorch
+    - torchvision
+    - xbatcher
 # legit progress bar
     - tqdm
+    - pip
+    - pip:
+      - nvidia-modulus[all]
