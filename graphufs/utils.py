@@ -1,9 +1,6 @@
-from graphcast import checkpoint, graphcast
-from jax import jit
-from jax.random import PRNGKey
+import logging
 import threading
-from graphufs import run_forward
-from ufs2arco.timer import Timer
+from graphcast import checkpoint, graphcast
 
 
 def get_chunk_data(generator, data: dict):
@@ -95,24 +92,6 @@ class DataGenerator:
             return self.data_0;
 
 
-def init_model(gufs, data: dict):
-    """Initialize model with random weights.
-
-    Args:
-        gufs: emulator class
-        data (str): data to be used for initialization?
-    """
-    init_jitted = jit(run_forward.init)
-    params, state = init_jitted(
-        rng=PRNGKey(gufs.init_rng_seed),
-        emulator=gufs,
-        inputs=data["inputs"].sel(optim_step=0),
-        targets_template=data["targets"].sel(optim_step=0),
-        forcings=data["forcings"].sel(optim_step=0),
-    )
-    return params, state
-
-
 def load_checkpoint(ckpt_path: str, verbose: bool = False):
     """Load checkpoint.
 
@@ -127,8 +106,8 @@ def load_checkpoint(ckpt_path: str, verbose: bool = False):
     model_config = ckpt.model_config
     task_config = ckpt.task_config
     if verbose:
-        print("Model description:\n", ckpt.description, "\n")
-        print("Model license:\n", ckpt.license, "\n")
+        logging.info("Model description:\n", ckpt.description, "\n")
+        logging.info("Model license:\n", ckpt.license, "\n")
     return params, state
 
 
@@ -184,6 +163,14 @@ def add_emulator_arguments(emulator, parser) -> None:
                     dest=k,
                     required=False,
                     nargs="+",
+                    help=f"{k}: default {v}",
+                )
+            elif isinstance(v,bool):
+                parser.add_argument(
+                    name,
+                    dest=k,
+                    action="store_true",
+                    required=False,
                     help=f"{k}: default {v}",
                 )
             else:

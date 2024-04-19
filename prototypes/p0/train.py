@@ -16,10 +16,11 @@ from graphufs import (
     compute_rmse_bias,
     add_emulator_arguments,
     set_emulator_options,
+    init_devices,
 )
-from ufs2arco.timer import Timer
 
 from simple_emulator import P0Emulator
+
 
 """
 Script to train and test graphufs over multiple chunks and epochs
@@ -55,7 +56,7 @@ def parse_args():
         dest="id",
         required=False,
         type=int,
-        default=0,
+        default=-1,
         help="ID of neural networks to resume training/testing from.",
     )
 
@@ -76,15 +77,11 @@ if __name__ == "__main__":
     # parse arguments
     args = parse_args()
 
-    # turn off absl warnings
-    logging.getLogger("absl").setLevel(logging.CRITICAL)
-
-    # initialize emulator and open dataset
-    walltime = Timer()
-    localtime = Timer()
-
     # initialize emulator
     gufs = P0Emulator()
+
+    # for multi-gpu training
+    init_devices(gufs)
 
     # data generators
     generator = DataGenerator(
@@ -98,18 +95,20 @@ if __name__ == "__main__":
     ckpt_id = args.id
     ckpt_path = f"{checkpoint_dir}/model_{ckpt_id}.npz"
 
-    if os.path.exists(ckpt_path):
-        localtime.start(f"Loading weights: {ckpt_path}")
+    if os.path.exists(ckpt_path) and args.id >= 0:
+        logging.info(f"Loading weights: {ckpt_path}")
         params, state = load_checkpoint(ckpt_path)
     else:
-        localtime.start("Initializing Optimizer and Parameters")
+        logging.info("Initializing Optimizer and Parameters")
         data = generator.get_data()  # just to figure out shapes
         params, state = init_model(gufs, data)
-    localtime.stop()
+        loss_name = f"{gufs.local_store_path}/loss.nc"
+        if os.path.exists(loss_name):
+            os.remove(loss_name)
 
     # training
     if not args.test:
-        walltime.start("Starting Training")
+        logging.info("Starting Training")
 
         # create checkpoint directory
         if not os.path.exists(checkpoint_dir):
@@ -120,7 +119,7 @@ if __name__ == "__main__":
         # training loop
         for e in range(gufs.num_epochs):
             for c in range(gufs.chunks_per_epoch):
-                print(f"Training on epoch {e} and chunk {c}")
+                logging.info(f"Training on epoch {e} and chunk {c}")
 
                 # get chunk of data in parallel with NN optimization
                 generator.generate()
@@ -153,7 +152,7 @@ if __name__ == "__main__":
 
     # testing
     else:
-        walltime.start("Starting Testing")
+        logging.info("Starting Testing")
 
         # create predictions and targets zarr file for WB2
         predictions_zarr_name = f"{gufs.local_store_path}/graphufs_predictions.zarr"
@@ -165,7 +164,7 @@ if __name__ == "__main__":
 
         stats = {}
         for c in range(gufs.chunks_per_epoch):
-            print(f"Testing on chunk {c}")
+            logging.info(f"Testing on chunk {c}")
 
             # get chunk of data in parallel with inference
             generator.generate()
@@ -187,7 +186,7 @@ if __name__ == "__main__":
             # Compute rmse and bias comparing targets and predictions
             compute_rmse_bias(predictions, targets, stats, c)
 
-            # write chunk by chunk to avoid storing all of it in memory
+            # write predictions chunk by chunk to avoid storing all of it in memory
             predictions = convert_wb2_format(gufs, predictions, inittimes)
             predictions = predictions.dropna("time")
             predictions.to_zarr(predictions_zarr_name, append_dim="time" if c else None)
@@ -197,9 +196,6 @@ if __name__ == "__main__":
             targets = targets.dropna("time")
             targets.to_zarr(targets_zarr_name, append_dim="time" if c else None)
 
-        print("--------- Statistiscs ---------")
+        logging.info("--------- Statistiscs ---------")
         for k, v in stats.items():
-            print(f"{k:32s}: RMSE: {v[0]} BIAS: {v[1]}")
-
-    # total walltime
-    walltime.stop("Total Walltime")
+            logging.info(f"{k:32s}: RMSE: {v[0]} BIAS: {v[1]}")

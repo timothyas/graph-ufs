@@ -13,6 +13,7 @@ class P0Emulator(ReplayEmulator):
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2022-6h-64x32_equiangular_conservative.zarr"
 
     local_store_path = "./zarr-stores"
+    no_cache_data = False
 
     # these could be moved to a yaml file later
     # task config options
@@ -85,6 +86,12 @@ class P0Emulator(ReplayEmulator):
     chunks_per_epoch = 1
     steps_per_chunk = None
     checkpoint_chunks = 1
+
+    # others
+    num_gpus = 1
+    log_only_rank0 = False
+    use_jax_distributed = False
+    use_xla_flags = False
 
 tree_util.register_pytree_node(
     P0Emulator,

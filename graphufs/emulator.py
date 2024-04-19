@@ -1,4 +1,5 @@
 import os
+import logging
 import math
 import yaml
 import warnings
@@ -28,7 +29,8 @@ class ReplayEmulator:
     }
     wb2_obs_url = ""
     
-    local_store_path = None
+    local_store_path = None     # directory where zarr file, model weights etc are stored
+    no_cache_data = None        # don't cache or use zarr dataset downloaded from GCS on disk
 
     # these could be moved to a yaml file later
     # task config options
@@ -69,10 +71,19 @@ class ReplayEmulator:
     steps_per_chunk = None           # number of steps to train for in each chunk
     checkpoint_chunks = None         # save model after this many chunks are processed
 
+    # others
+    num_gpus = None                  # number of GPUs to use for training
+    log_only_rank0 = None            # log only messages from rank 0
+    use_jax_distributed = None       # Use jax's distributed mechanism, no need for manula mpi4jax calls
+    use_xla_flags = None             # Use recommended flags for XLA and NCCL https://jax.readthedocs.io/en/latest/gpu_performance_tips.html
+
     def __init__(self):
 
         if self.local_store_path is None:
             warnings.warng("ReplayEmulator.__init__: no local_store_path set, data will always be accessed remotely. Proceed with patience.")
+
+        self.mpi_rank = None
+        self.mpi_size = None
 
         pfull = self._get_replay_vertical_levels()
         levels = pfull.sel(
@@ -223,16 +234,29 @@ class ReplayEmulator:
             inclusive="both",
         )
 
+        # split the dataset across nodes
+        # make sure work is _exactly_ equally distirubuted to prevent hangs
+        # when the number of time stamps is not evenly divisible by the number of ranks,
+        # we discard whatever data is left over. Not a problem because parallelization is not done for testing.
+        if self.mpi_size > 1:
+            mpi_chunk_size = len(all_new_time) // self.mpi_size
+            start = self.mpi_rank * mpi_chunk_size
+            end = (self.mpi_rank + 1) * mpi_chunk_size
+            all_new_time = all_new_time[start:end]
+            logging.info(f"MPI rank {self.mpi_rank}: {all_new_time[0]} to {all_new_time[-1]} : {len(all_new_time)} time stamps.")
+
         # subsample in time, grab variables and vertical levels we want
         all_xds = self.subsample_dataset(xds, new_time=all_new_time)
 
         # download only missing dates and write them to disk
-        if os.path.exists(local_data_path):
+        if self.no_cache_data:
+            logging.info(f"Downloading data for {len(all_xds.time.values)} time stamps.")
+        elif os.path.exists(local_data_path):
             # figure out missing dates
             xds_on_disk = xr.open_zarr(local_data_path)
             missing_dates = set(all_xds.time.values) - set(xds_on_disk.time.values)
             xds_on_disk.close()
-            print(f"Downloading missing data for {len(missing_dates)} time stamps.")
+            logging.info(f"Downloading missing data for {len(missing_dates)} time stamps.")
             # download and write missing dates to disk
             missing_xds = all_xds.sel(time=list(missing_dates))
             missing_xds.to_zarr(local_data_path, append_dim="time")
@@ -240,7 +264,7 @@ class ReplayEmulator:
             all_xds.close()
             all_xds = xr.open_zarr(local_data_path)
         else:
-            print(f"Downloading missing data for {len(all_xds.time.values)} time stamps.")
+            logging.info(f"Downloading missing data for {len(all_xds.time.values)} time stamps.")
             all_xds.to_zarr(local_data_path)
 
         # split dataset into chunks
@@ -260,9 +284,9 @@ class ReplayEmulator:
             random.shuffle(all_new_time_chunks)
 
         # print chunk boundaries
-        print(f"Chunks total: {len(all_new_time_chunks)}")
+        logging.info(f"Chunks total: {len(all_new_time_chunks)}")
         for chunk_id, new_time in enumerate(all_new_time_chunks):
-            print(f"Chunk {chunk_id}: {new_time[0]} to {new_time[-1]} : {len(new_time)} time stamps")
+            logging.info(f"Chunk {chunk_id}: {new_time[0]} to {new_time[-1]} : {len(new_time)} time stamps")
 
         # iterate over all chunks
         for chunk_id, new_time in enumerate(all_new_time_chunks):
