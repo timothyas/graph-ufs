@@ -28,6 +28,7 @@ from jax import (
     device_count,
     print_environment_info,
     distributed,
+    block_until_ready,
 )
 from graphcast.xarray_jax import pmap
 from jax.lax import pmean
@@ -139,6 +140,7 @@ def optimize(
             lambda x: unwrap_data(x.mean(), require_jax=True), (loss, diagnostics)
         )
 
+    
     def optim_step(
         params,
         state,
@@ -148,7 +150,6 @@ def optimize(
         target_batches,
         forcing_batches,
     ):
-
         """Note that this function has to be definied within optimize so that we do not
         pass optimizer as an argument. Otherwise we get some craazy jax errors"""
 
@@ -171,25 +172,23 @@ def optimize(
             )
 
             # aggregate across local devices
-            grads = pmean(grads, axis_name="optim_step")
-            loss = pmean(loss, axis_name="optim_step")
-            diagnostics = pmean(diagnostics, axis_name="optim_step")
-            next_state = pmean(next_state, axis_name="optim_step")
+            if num_gpus > 1:
+                grads = pmean(grads, axis_name="optim_step")
+                loss = pmean(loss, axis_name="optim_step")
+                diagnostics = pmean(diagnostics, axis_name="optim_step")
+                next_state = pmean(next_state, axis_name="optim_step")
 
             # manually aggregate results accross nodes. if emulator.use_jax_distributed
             # is turned on, there is no need for this code.
             if (not use_jax_distributed) and (mpi_size > 1):
-                # use a helpfer function for grads, which is a dict of dicts,
-                # "layer_name" & "weights/bias" being the two keys
+                # use a helpfer function for grads and other trees
                 def aggregate_across_nodes(d):
-                    if isinstance(d, dict):
-                        return {k: aggregate_across_nodes(v) for k, v in d.items()}
-                    elif isinstance(d, jnp.ndarray):
+                    def aggregate(d):
                         d, _ = mpi4jax.allreduce(d, op=MPI.SUM, comm=MPI.COMM_WORLD)
                         d = d / mpi_size
                         return d
-                    else:
-                        return d
+
+                    return tree_util.tree_map(lambda x: aggregate(x), d)
 
                 loss = aggregate_across_nodes(loss)
                 grads = aggregate_across_nodes(grads)
@@ -198,32 +197,57 @@ def optimize(
 
             return (loss, (diagnostics, next_state)), grads
 
-        # pmap batch processing into multiple GPUs
-        (loss, (diagnostics, next_state)), grads = pmap(
-            process_batch, dim="optim_step"
-        )(input_batches, target_batches, forcing_batches)
+        if num_gpus > 1:
+            # pmap batch processing into multiple GPUs
+            (loss, (diagnostics, next_state)), grads = pmap(
+                process_batch, dim="optim_step"
+            )(input_batches, target_batches, forcing_batches)
 
-        # Remove the first dimension (device dimension), which is added due to pmap
-        def remove_first_dim(d):
-            if isinstance(d, dict):
-                return {k: remove_first_dim(v) for k, v in d.items()}
-            elif isinstance(d, jnp.ndarray):
-                return d[0]
-            else:
-                return d
+            # Remove the first dimension (device dimension), which is added due to pmap
+            def remove_first_dim(d):
+                return tree_util.tree_map(lambda x: x[0], d)
 
-        loss = remove_first_dim(loss)
-        grads = remove_first_dim(grads)
-        diagnostics = remove_first_dim(diagnostics)
-        next_state = remove_first_dim(next_state)
+            loss = remove_first_dim(loss)
+            grads = remove_first_dim(grads)
+            diagnostics = remove_first_dim(diagnostics)
+            next_state = remove_first_dim(next_state)
+        else:
+            (loss, (diagnostics, next_state)), grads = process_batch(
+                input_batches, target_batches, forcing_batches
+            )
 
         # update parameters
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return params, loss, diagnostics, opt_state, grads
 
-    optim_step_jitted = jit(optim_step)
+    # jit optim_step only once
+    if not hasattr(optimize, "optim_step_jitted"):
+        logging.info("Started jitting optim_step")
 
+        # jit on first slice
+        sl = slice(0, num_gpus)
+
+        # jitted function
+        optimize.optim_step_jitted = jit(optim_step) #, static_argnums=(4,5,6))
+
+        # warm up step
+        x,_,_,_,_ = optimize.optim_step_jitted(
+            params=params,
+            state=state,
+            opt_state=opt_state,
+            emulator=emulator,
+            input_batches=input_batches.isel(optim_step=sl),
+            target_batches=target_batches.isel(optim_step=sl),
+            forcing_batches=forcing_batches.isel(optim_step=sl),
+        )
+
+        # wait until value for x is ready i.e. until jitting completes
+        block_until_ready(x)
+
+        logging.info("Finished jitting optim_step")
+
+    optim_steps = []
     loss_values = []
     loss_by_var = {k: list() for k in target_batches.data_vars}
 
@@ -232,43 +256,53 @@ def optimize(
     if emulator.mpi_rank == 0:
         progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
 
+    # make a deep copy of slice 0
+    sl = slice(0, num_gpus)
+    i_batches=input_batches.isel(optim_step=sl).copy(deep=True)
+    t_batches=target_batches.isel(optim_step=sl).copy(deep=True)
+    f_batches=forcing_batches.isel(optim_step=sl).copy(deep=True)
+
     for k in range(0, n_steps, num_gpus):
         # When the number of batches is not evenly divisible by num_gpus
         # the last set of batches may not be enough for all gpus. We skip
-        # training because aggregation can corrupt final result. Passing
-        # a shorter list of devices may solve it, but the jitted optim
-        # function don't like that.
+        # training because aggregation can corrupt final result.
         if k + num_gpus > n_steps:
-            # repeat losses, see below for why?
-            n_repeat = n_steps - k
-            loss_values = loss_values + [loss_values[-1]] * n_repeat
-            for k, v in loss_by_var.items():
-                loss_by_var[k] = v + [v[-1]] * n_repeat
             break
 
-        # the slice should provide for all gpus
+        # The purpose of the following code is best described as confusing
+        # the jix.jat cache system. We start from a deepcopy of slice 0 where the jitting
+        # is carried out, and sneakly update its values. If you use xarray update/copy etc
+        # the cache system somehow notices, and either becomes slow or messes up the result
+        # Copying variable values individually avoids both, fast and produces same results as before
         sl = slice(k, k + num_gpus)
+        i1_batches=input_batches.isel(optim_step=sl)
+        t1_batches=target_batches.isel(optim_step=sl)
+        f1_batches=forcing_batches.isel(optim_step=sl)
+        for var_name, var in i1_batches.data_vars.items():
+            i_batches[var_name] = i_batches[var_name].copy(deep=False,data=var.values)
+        for var_name, var in t1_batches.data_vars.items():
+            t_batches[var_name] = t_batches[var_name].copy(deep=False,data=var.values)
+        for var_name, var in f1_batches.data_vars.items():
+            f_batches[var_name] = f_batches[var_name].copy(deep=False,data=var.values)
 
-        params, loss, diagnostics, opt_state, grads = optim_step_jitted(
-            opt_state=opt_state,
-            emulator=emulator,
-            input_batches=input_batches.isel(optim_step=sl),
-            target_batches=target_batches.isel(optim_step=sl),
-            forcing_batches=forcing_batches.isel(optim_step=sl),
+        # call optimize
+        params, loss, diagnostics, opt_state, grads = optimize.optim_step_jitted(
             params=params,
             state=state,
+            opt_state=opt_state,
+            emulator=emulator,
+            input_batches=i_batches,
+            target_batches=t_batches,
+            forcing_batches=f_batches,
         )
 
-        # Since we are doing num_gpus steps per iteration, repeat the losses.
-        # Note that pmean() has averaged the losses from different gpus.
-        # This is necessary to obtain loss datasets of n_steps size.
-        for i in range(num_gpus):
+        # update progress bar from rank 0
+        if emulator.mpi_rank == 0:
+            optim_steps.append(k // num_gpus)
             loss_values.append(loss)
-        for key, val in diagnostics.items():
-            for i in range(num_gpus):
+            for key, val in diagnostics.items():
                 loss_by_var[key].append(val)
 
-        if emulator.mpi_rank == 0:
             mean_grad = np.mean(
                 tree_util.tree_flatten(
                     tree_util.tree_map(lambda x: np.abs(x).mean(), grads)
@@ -284,6 +318,7 @@ def optimize(
 
     # save losses for each batch
     loss_ds = xr.Dataset()
+
     if emulator.mpi_rank == 0:
         loss_fname = os.path.join(emulator.local_store_path, "loss.nc")
         previous_optim_steps = 0
@@ -291,7 +326,7 @@ def optimize(
             stored_loss_ds = xr.open_dataset(loss_fname)
             previous_optim_steps = len(stored_loss_ds.optim_step)
 
-        loss_ds["optim_step"] = input_batches["optim_step"] + previous_optim_steps
+        loss_ds["optim_step"] = [x + previous_optim_steps for x in optim_steps]
         loss_ds.attrs["batch_size"] = len(input_batches["batch"])
         loss_ds["var_index"] = xr.DataArray(
             np.arange(len(loss_by_var)),
@@ -418,7 +453,9 @@ def init_devices(emulator):
     # to take effect.
 
     # this one is needed for multiple logical devices
-    os.environ["XLA_FLAGS"] = f"--xla_force_host_platform_device_count={emulator.num_gpus} "
+    os.environ[
+        "XLA_FLAGS"
+    ] = f"--xla_force_host_platform_device_count={emulator.num_gpus} "
 
     if emulator.use_xla_flags:
 
