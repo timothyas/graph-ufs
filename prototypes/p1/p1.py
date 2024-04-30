@@ -101,6 +101,17 @@ class P1Emulator(ReplayEmulator):
     grad_rng_seed = 0
     init_rng_seed = 0
     training_batch_rng_seed = 100
+    
+    # data chunking options
+    chunks_per_epoch = 26      # 1 chunk per year
+    steps_per_chunk = None
+    checkpoint_chunks = 1
+
+    # others
+    num_gpus = 1
+    log_only_rank0 = False
+    use_jax_distributed = False
+    use_xla_flags = False
 
 tree_util.register_pytree_node(
     P1Emulator,
