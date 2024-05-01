@@ -65,15 +65,3 @@ the dataset achieved in this fashing is not colocated with 1 degree gaussian gri
 latitudinal direction. This is something to just keep in mind, but this should not alter the 
 results qualitatively.
 
-# Ocean-Atmosphere Coupling 
-This would be pursued once the p1 prototype is up and running with the atmospheric dataset.
-The plan is to use the ocean variables alongside the atmospheric variables in the architecture.
-Similar to the atmospheric data, the ocean dataset also needs to be coarsened in this step.
-We plan to achieve this in a 2-step process as:
- - Regrid 1/4 degree MOM6 tripolar grid data to 1/4 degree gaussian grid using the coupler
- - Subsample 1/4 degree gaussian grid ocean data to coarsen it to 1 degree.
-
-Note that, in general, it's important to keep the resolution of the gaussian grid in the regrid step 
-high enough to avoid aliasing issues. Once we have captured most of small scale features on gaussian 
-grid, we can either subsample or coarsen by projecting on the spherical harmonics, truncate the total 
-wavenumber, and project back to the gaussian grid.
