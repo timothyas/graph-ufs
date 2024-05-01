@@ -42,7 +42,7 @@ class P1Emulator(ReplayEmulator):
         "pressfc",
         "ugrd10m",
         "vgrd10m",
-        "tprecp",
+        "prateb_ave",
         "tmp",
         "ugrd",
         "vgrd",
