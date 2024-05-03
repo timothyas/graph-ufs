@@ -11,8 +11,13 @@ import pandas as pd
 import xarray as xr
 from jax import tree_util
 
+from ufs2arco.regrid.ufsregridder import UFSRegridder
 from graphcast.graphcast import ModelConfig, TaskConfig
 from graphcast.data_utils import extract_inputs_targets_forcings
+from graphcast.model_utils import dataset_to_stacked
+from graphcast.losses import normalized_level_weights, normalized_latitude_weights
+
+from .utils import get_channel_index, get_last_input_mapping
 
 class ReplayEmulator:
     """An emulator based on UFS Replay data. This manages all model configuration settings and normalization fields. Currently it is designed to be inherited for a specific use-case, and this could easily be generalized to read in settings via a configuration file (yaml, json, etc). Be sure to register any inherited class as a pytree for it to work with JAX.
@@ -36,8 +41,11 @@ class ReplayEmulator:
     input_variables = tuple()
     target_variables = tuple()
     forcing_variables = tuple()
-    all_variables = tuple() # this is created in __init__
+    all_variables = tuple()     # this is created in __init__
     pressure_levels = tuple()
+    levels = list()             # created in __init__, has exact pfull level values
+    latitude = tuple()
+    longitude = tuple()
 
     # time related
     delta_t = None              # the model time step
@@ -60,6 +68,17 @@ class ReplayEmulator:
     radius_query_fraction_edge_length = None
     mesh2grid_edge_normalization_factor = None
 
+    # loss weighting, defaults to GraphCast implementation
+    weight_loss_per_latitude = True
+    weight_loss_per_level = True
+    loss_weights_per_variable = {
+        "tmp2m"         : 1.0,
+        "ugrd10m"       : 0.1,
+        "vgrd10m"       : 0.1,
+        "pressfc"       : 0.1,
+        "prateb_ave"    : 0.1,
+    }
+
     # this is used for initializing the state in the gradient computation
     grad_rng_seed = None
     init_rng_seed = None
@@ -76,18 +95,29 @@ class ReplayEmulator:
     use_jax_distributed = None       # Use jax's distributed mechanism, no need for manula mpi4jax calls
     use_xla_flags = None             # Use recommended flags for XLA and NCCL https://jax.readthedocs.io/en/latest/gpu_performance_tips.html
 
+    # for stacked graphcast
+    last_input_channel_mapping = None
+
     def __init__(self, mpi_rank=None, mpi_size=None):
 
         if self.local_store_path is None:
-            warnings.warng("ReplayEmulator.__init__: no local_store_path set, data will always be accessed remotely. Proceed with patience.")
+            warnings.warn("ReplayEmulator.__init__: no local_store_path set, data will always be accessed remotely. Proceed with patience.")
+
+        if any(x not in self.input_variables for x in self.target_variables):
+            raise NotImplementedError(f"GraphUFS cannot predict target variables that are not also inputs")
 
         self.mpi_rank = mpi_rank
         self.mpi_size = mpi_size
 
         pfull = self._get_replay_vertical_levels()
-        levels = pfull.sel(
-            pfull=list(self.pressure_levels),
-            method="nearest",
+        latitude, longitude = self._get_replay_grid(self.resolution)
+        self.latitude = tuple(float(x) for x in latitude)
+        self.longitude = tuple(float(x) for x in longitude)
+        self.levels = list(
+            pfull.sel(
+                pfull=list(self.pressure_levels),
+                method="nearest",
+            ).values
         )
         self.model_config = ModelConfig(
             resolution=self.resolution,
@@ -98,20 +128,100 @@ class ReplayEmulator:
             radius_query_fraction_edge_length=self.radius_query_fraction_edge_length,
             mesh2grid_edge_normalization_factor=self.mesh2grid_edge_normalization_factor,
         )
-        self.task_config = TaskConfig(
-            input_variables=self.input_variables,
-            target_variables=self.target_variables,
-            forcing_variables=self.forcing_variables,
-            pressure_levels=levels,
-            input_duration=self.input_duration,
-        )
+        # try/except logic to support original graphcast.graphcast.TaskConfig
+        # since I couldn't get inspect.getfullargspec to work
+        try:
+            self.task_config = TaskConfig(
+                input_variables=self.input_variables,
+                target_variables=self.target_variables,
+                forcing_variables=self.forcing_variables,
+                pressure_levels=tuple(self.levels),
+                input_duration=self.input_duration,
+                longitude=self.longitude,
+                latitude=self.latitude,
+            )
+        except ValueError:
+            self.task_config = TaskConfig(
+                input_variables=self.input_variables,
+                target_variables=self.target_variables,
+                forcing_variables=self.forcing_variables,
+                pressure_levels=tuple(self.levels),
+                input_duration=self.input_duration,
+            )
+
 
         self.all_variables = tuple(set(
             self.input_variables + self.target_variables + self.forcing_variables
         ))
 
+        # convert some types
+        self.delta_t = pd.Timedelta(self.delta_t)
+        self.input_duration = pd.Timedelta(self.input_duration)
+
+        # get normalization statistics
         self.norm = {}
+        self.stacked_norm = {}
         self.norm["mean"], self.norm["std"], self.norm["stddiff"] = self.load_normalization()
+        for key in self.norm.keys():
+            input_norms, target_norms = self.normalization_to_stacked(self.norm[key], preserved_dims=tuple())
+            self.stacked_norm[key] = {"inputs": input_norms, "targets": target_norms}
+
+
+    @property
+    def time_per_forecast(self):
+        return self.target_lead_time + self.input_duration
+
+    @property
+    def n_input(self):
+        """Number of steps that initial condition(s) cover"""
+        return self.input_duration // self.delta_t
+
+    @property
+    def n_forecast(self):
+        """Number of steps covered by a single forecast, including initial condition(s)"""
+        return self.time_per_forecast // self.delta_t
+
+    @property
+    def n_target(self):
+        """Number of steps in the target, doesn't include initial condition(s)"""
+        return self.target_lead_time // self.delta_t
+
+    @property
+    def extract_kwargs(self):
+        kw = {k: v for k, v in dataclasses.asdict(self.task_config).items() if k not in ("latitude", "longitude")}
+        kw["target_lead_times"] = self.target_lead_time
+        return kw
+
+
+    def open_dataset(self, **kwargs):
+        xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"}, **kwargs)
+        return xds
+
+
+    def get_time(self, mode):
+        # choose dates based on mode
+        if mode == "training":
+            start = self.training_dates[ 0]
+            end   = self.training_dates[-1]
+        elif mode == "testing":
+            start = self.testing_dates[ 0]
+            end   = self.testing_dates[-1]
+        elif mode == "validation":
+            start = self.validation_dates[ 0]
+            end   = self.validation_dates[-1]
+        else:
+            raise ValueError("Unknown mode: make sure it is either training/testing/validation")
+
+        # build time vector based on the model, not the data
+        start = pd.Timestamp(start)
+        end   = pd.Timestamp(end)
+        time = pd.date_range(
+            start=start,
+            end=end,
+            freq=self.delta_t,
+            inclusive="both",
+        )
+        return time
 
 
     def subsample_dataset(self, xds, new_time=None):
@@ -126,7 +236,7 @@ class ReplayEmulator:
         """
 
         # select our vertical levels
-        xds = xds.sel(pfull=list(self.pressure_levels), method="nearest")
+        xds = xds.sel(pfull=self.levels)
 
         # only grab variables we care about
         myvars = list(x for x in self.all_variables if x in xds)
@@ -138,7 +248,7 @@ class ReplayEmulator:
         return xds
 
 
-    def preprocess(self, xds, batch_index=0, drop_cftime=True):
+    def preprocess(self, xds, batch_index=None, drop_cftime=True):
         """Prepare a single batch for GraphCast
 
         Args:
@@ -165,9 +275,13 @@ class ReplayEmulator:
 
         bds["time"] = (bds.datetime - bds.datetime[0])
         bds = bds.swap_dims({"datetime": "time"}).reset_coords()
-        bds = bds.expand_dims({
-            "batch": [batch_index],
-        })
+        if batch_index is not None:
+            bds = bds.expand_dims({
+                "batch": [batch_index],
+            })
+
+        # note that this has to be after batch_index is set for variables
+        # added in graphcast.data_utils.add_derived_vars to have the right dimensionality
         bds = bds.set_coords(["datetime"])
 
         # cftime is a data_var not a coordinate, but if it's made to be a coordinate
@@ -205,33 +319,7 @@ class ReplayEmulator:
         # second epoch onwards should be able to read data locally
         local_data_path = os.path.join(self.local_store_path, "data.zarr")
         xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
-
-        # choose dates based on mode
-        if mode == "training":
-            start = self.training_dates[ 0]
-            end   = self.training_dates[-1]
-            if allow_overlapped_chunks is None: allow_overlapped_chunks = False
-        elif mode == "testing":
-            start = self.testing_dates[ 0]
-            end   = self.testing_dates[-1]
-            allow_overlapped_chunks = True
-        elif mode == "validation":
-            start = self.validation_dates[ 0]
-            end   = self.validation_dates[-1]
-            if allow_overlapped_chunks is None: allow_overlapped_chunks = False
-        else:
-            raise ValueError("Unknown mode: make sure it is either training/testing/validation")
-
-        # build time vector based on the model, not the data
-        delta_t = pd.Timedelta(self.delta_t)
-        start = pd.Timestamp(start)
-        end   = pd.Timestamp(end)
-        all_new_time = pd.date_range(
-            start=start,
-            end=end,
-            freq=delta_t,
-            inclusive="both",
-        )
+        all_new_time = self.get_time(mode=mode)
 
         # split the dataset across nodes
         # make sure work is _exactly_ equally distirubuted to prevent hangs
@@ -295,11 +383,9 @@ class ReplayEmulator:
             end = new_time[-1]
 
             # figure out duration of IC(s), forecast, all of training
-            input_duration = pd.Timedelta(self.input_duration)
-            time_per_forecast = self.target_lead_time + input_duration
-            training_duration = end - start
+            data_duration = end - start
 
-            n_max_forecasts = (training_duration - input_duration) // delta_t
+            n_max_forecasts = (data_duration - self.input_duration) // self.delta_t
             n_max_optim_steps = math.ceil(n_max_forecasts / self.batch_size)
             n_optim_steps = n_max_optim_steps if n_optim_steps is None else n_optim_steps
             n_forecasts = n_optim_steps * self.batch_size
@@ -315,8 +401,8 @@ class ReplayEmulator:
             # this has to end such that we can pull an entire forecast from the training data
             all_initial_times = pd.date_range(
                 start=start,
-                end=end - time_per_forecast,
-                freq=delta_t,
+                end=end - self.time_per_forecast,
+                freq=self.delta_t,
                 inclusive="both",
             )
 
@@ -333,7 +419,7 @@ class ReplayEmulator:
                 forecast_initial_times = all_initial_times[:n_forecasts]
 
             # warnings before we get started
-            if pd.Timedelta(self.target_lead_time) > delta_t:
+            if pd.Timedelta(self.target_lead_time) > self.delta_t:
                 warnings.warn("ReplayEmulator.get_training_batches: need to rework this to pull targets for all steps at delta_t intervals between initial conditions and target_lead times, at least in part because we need the forcings at each delta_t time step, and the data extraction code only pulls this at each specified target_lead_time")
 
             # load the dataset in to avoid lots of calls... need to figure out how to do this best
@@ -369,8 +455,8 @@ class ReplayEmulator:
 
                 timestamps_in_this_forecast = pd.date_range(
                     start=forecast_initial_times[i],
-                    end=forecast_initial_times[i]+time_per_forecast,
-                    freq=delta_t,
+                    end=forecast_initial_times[i]+self.time_per_forecast,
+                    freq=self.delta_t,
                     inclusive="both",
                 )
                 batch = self.preprocess(
@@ -380,8 +466,7 @@ class ReplayEmulator:
 
                 this_input, this_target, this_forcing = extract_inputs_targets_forcings(
                     batch,
-                    target_lead_times=self.target_lead_time,
-                    **dataclasses.asdict(self.task_config),
+                    **self.extract_kwargs,
                 )
 
                 # fix this later for batch_size != 1
@@ -426,6 +511,7 @@ class ReplayEmulator:
                 xds = xr.open_zarr(self.norm_urls[component], **kwargs)
                 myvars = list(x for x in self.all_variables if x in xds)
                 xds = xds[myvars]
+                xds = xds.sel(pfull=self.levels)
                 xds = xds.load()
                 xds = xds.rename({"pfull": "level"})
                 xds.to_zarr(local_path)
@@ -436,6 +522,73 @@ class ReplayEmulator:
         diffs_stddev_by_level = open_normalization("stddiff")
         return mean_by_level, stddev_by_level, diffs_stddev_by_level
 
+    def normalization_to_stacked(self, xds, **kwargs):
+        """
+        kwargs passed to graphcast.model_utils.dataset_to_stacked
+        """
+
+        def stackit(xds, varnames, n_time, **kwargs):
+            norms = xds[[x for x in varnames if x in xds]]
+            # do this to replicate across time dimension
+            norms = xr.concat(
+                [norms.copy() for _ in range(n_time)],
+                dim="time",
+            )
+            dimorder = ("batch", "time", "level", "lat", "lon")
+            dimorder = tuple(x for x in dimorder if x in norms.dims)
+            norms = norms.transpose(*dimorder)
+            return dataset_to_stacked(norms, **kwargs)
+
+        input_norms = stackit(xds, self.input_variables, n_time=self.n_input, **kwargs)
+        forcing_norms = stackit(xds, self.forcing_variables, n_time=self.n_target, **kwargs)
+        target_norms = stackit(xds, self.target_variables, n_time=self.n_target, **kwargs)
+        input_norms = xr.concat(
+            [
+                input_norms,
+                forcing_norms,
+            ],
+            dim="channels",
+        )
+        return input_norms.data, target_norms.data
+
+
+    def calc_loss_weights(self, gds):
+
+        _, xtargets, _ = gds.get_xarrays(0)
+        _, targets = gds[0]
+
+        if targets.ndim == 3:
+            weights = np.ones_like(targets)
+        else:
+            weights = np.ones_like(targets[0])
+            weights = weights[None]
+
+        # 1. compute latitude weighting
+        if self.weight_loss_per_latitude:
+            lat_weights = normalized_latitude_weights(xtargets)
+            lat_weights = lat_weights.data[...,None][...,None]
+
+            weights *= lat_weights
+
+        # 2. compute per variable weighting
+        target_idx = get_channel_index(xtargets)
+        for ichannel in range(targets.shape[-1]):
+            varname = target_idx[ichannel]["varname"]
+            if varname in self.loss_weights_per_variable:
+                weights[..., ichannel] *= self.loss_weights_per_variable[varname]
+
+        # 3. compute per level weighting
+        if self.weight_loss_per_level:
+            level_weights = normalized_level_weights(xtargets)
+            for ichannel in range(targets.shape[-1]):
+                if "level" in target_idx[ichannel].keys():
+                    ilevel = target_idx[ichannel]["level"]
+                    weights[..., ichannel] *= level_weights.isel(level=ilevel).data
+
+        # do we need to put this on the device(s)?
+        return weights
+
+
 
     @staticmethod
     def _get_replay_vertical_levels():
@@ -443,6 +596,23 @@ class ReplayEmulator:
         with open(pfull_path, "r") as f:
             pfull = yaml.safe_load(f)["pfull"]
         return xr.DataArray(pfull, coords={"pfull": pfull}, dims="pfull")
+
+    def _get_replay_grid(self, resolution: int | float):
+        if int(resolution) == 1:
+            if "0.25-degree-subsampled" in self.data_url:
+                lats, lons = UFSRegridder.compute_gaussian_grid(768, 1536)
+                lats = lats[::4]
+                lons = lons[::4]
+            else:
+                lats, lons = UFSRegridder.compute_gaussian_grid(192, 384)
+
+        elif int(resolution*100) == 25:
+            lats, lons = UFSRegridder.compute_gaussian_grid(768, 1536)
+        else:
+            raise NotImplementedError("Resolution not available in Replay data")
+        lats = lats[::-1]
+        return lats, lons
+
 
     def combine_chunk(self, ds_list):
         """Used by the training batch creation code to combine many datasets for optimization"""
@@ -472,6 +642,9 @@ class ReplayEmulator:
         children = tuple()
         aux_data = {"mpi_rank": self.mpi_rank, "mpi_size": self.mpi_size}
         return (children, aux_data)
+
+    def set_last_input_mapping(self, gds):
+        self.last_input_channel_mapping = get_last_input_mapping(gds)
 
 
     @classmethod
