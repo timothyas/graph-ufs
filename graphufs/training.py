@@ -111,7 +111,16 @@ def init_model(emulator, data: dict):
 
 
 def optimize(
-    params, state, optimizer, emulator, input_batches, target_batches, forcing_batches
+    params,
+    state,
+    optimizer,
+    emulator,
+    input_batches,
+    target_batches,
+    forcing_batches,
+    input_batches_valid,
+    target_batches_valid,
+    forcing_batches_valid,
 ):
     """Optimize the model parameters by running through all optim_steps in data
 
@@ -121,6 +130,7 @@ def optimize(
         optimizer (Callable, optax.optimizer): see `here <https://optax.readthedocs.io/en/latest/api/optimizers.html>`_
         emulator (ReplayEmulator): the emulator object
         input_batches, training_batches, forcing_batches (xarray.Dataset): with data needed for training
+        input_batches_valid, training_batches_valid, forcing_batches_valid (xarray.Dataset): validation data
 
     Returns:
         params (dict): optimized model parameters
@@ -141,7 +151,6 @@ def optimize(
             lambda x: unwrap_data(x.mean(), require_jax=True), (loss, diagnostics)
         )
 
-
     def optim_step(
         params,
         state,
@@ -150,6 +159,9 @@ def optimize(
         input_batches,
         target_batches,
         forcing_batches,
+        input_batches_valid,
+        target_batches_valid,
+        forcing_batches_valid,
     ):
         """Note that this function has to be definied within optimize so that we do not
         pass optimizer as an argument. Otherwise we get some craazy jax errors"""
@@ -161,7 +173,11 @@ def optimize(
             return loss, (diagnostics, next_state)
 
         # process one batch per GPU
-        def process_batch(inputs, targets, forcings):
+        def process_batch(
+            inputs, targets, forcings, inputs_valid, targets_valid, forcings_valid
+        ):
+
+            # training pass
             (loss, (diagnostics, next_state)), grads = value_and_grad(
                 _aux, has_aux=True
             )(
@@ -172,10 +188,23 @@ def optimize(
                 forcings,
             )
 
+            # validation pass
+            loss_valid = None
+            if inputs_valid is not None:
+                loss_valid, _ = _aux(
+                    params,
+                    state,
+                    inputs_valid,
+                    targets_valid,
+                    forcings_valid,
+                )
+
             # aggregate across local devices
             if num_gpus > 1:
                 grads = pmean(grads, axis_name="optim_step")
                 loss = pmean(loss, axis_name="optim_step")
+                if loss_valid is not None:
+                    loss_valid = pmean(loss_valid, axis_name="optim_step")
                 diagnostics = pmean(diagnostics, axis_name="optim_step")
                 next_state = pmean(next_state, axis_name="optim_step")
 
@@ -192,35 +221,51 @@ def optimize(
                     return tree_util.tree_map(lambda x: aggregate(x), d)
 
                 loss = aggregate_across_nodes(loss)
+                if loss_valid is not None:
+                    loss_valid = aggregate_across_nodes(loss_valid)
                 grads = aggregate_across_nodes(grads)
                 diagnostics = aggregate_across_nodes(diagnostics)
                 next_state = aggregate_across_nodes(next_state)
 
-            return (loss, (diagnostics, next_state)), grads
+            return (loss, (diagnostics, next_state)), grads, loss_valid
 
         if num_gpus > 1:
             # pmap batch processing into multiple GPUs
-            (loss, (diagnostics, next_state)), grads = pmap(
+            (loss, (diagnostics, next_state)), grads, loss_valid = pmap(
                 process_batch, dim="optim_step"
-            )(input_batches, target_batches, forcing_batches)
+            )(
+                input_batches,
+                target_batches,
+                forcing_batches,
+                input_batches_valid,
+                target_batches_valid,
+                forcing_batches_valid,
+            )
 
             # Remove the first dimension (device dimension), which is added due to pmap
             def remove_first_dim(d):
                 return tree_util.tree_map(lambda x: x[0], d)
 
             loss = remove_first_dim(loss)
+            if loss_valid is not None:
+                loss_valid = remove_first_dim(loss_valid)
             grads = remove_first_dim(grads)
             diagnostics = remove_first_dim(diagnostics)
             next_state = remove_first_dim(next_state)
         else:
-            (loss, (diagnostics, next_state)), grads = process_batch(
-                input_batches, target_batches, forcing_batches
+            (loss, (diagnostics, next_state)), grads, loss_valid = process_batch(
+                input_batches,
+                target_batches,
+                forcing_batches,
+                input_batches_valid,
+                target_batches_valid,
+                forcing_batches_valid,
             )
 
         # update parameters
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return params, loss, diagnostics, opt_state, grads
+        return params, loss, diagnostics, opt_state, grads, loss_valid
 
     # jit optim_step only once
     if not hasattr(optimize, "optim_step_jitted"):
@@ -230,10 +275,10 @@ def optimize(
         sl = slice(0, num_gpus)
 
         # jitted function
-        optimize.optim_step_jitted = jit(optim_step) #, static_argnums=(4,5,6))
+        optimize.optim_step_jitted = jit(optim_step)
 
         # warm up step
-        x,_,_,_,_ = optimize.optim_step_jitted(
+        x, *_ = optimize.optim_step_jitted(
             params=params,
             state=state,
             opt_state=opt_state,
@@ -241,27 +286,56 @@ def optimize(
             input_batches=input_batches.isel(optim_step=sl),
             target_batches=target_batches.isel(optim_step=sl),
             forcing_batches=forcing_batches.isel(optim_step=sl),
+            input_batches_valid=input_batches_valid.isel(optim_step=sl),
+            target_batches_valid=target_batches_valid.isel(optim_step=sl),
+            forcing_batches_valid=forcing_batches_valid.isel(optim_step=sl),
+        )
+        y, *_ = optimize.optim_step_jitted(
+            params=params,
+            state=state,
+            opt_state=opt_state,
+            emulator=emulator,
+            input_batches=input_batches.isel(optim_step=sl),
+            target_batches=target_batches.isel(optim_step=sl),
+            forcing_batches=forcing_batches.isel(optim_step=sl),
+            input_batches_valid=None,
+            target_batches_valid=None,
+            forcing_batches_valid=None,
         )
 
-        # wait until value for x is ready i.e. until jitting completes
+        # wait until value for x,y are ready i.e. until jitting completes
         block_until_ready(x)
+        block_until_ready(y)
 
         logging.info("Finished jitting optim_step")
 
     optim_steps = []
     loss_values = []
+    loss_valid_values = []
     loss_by_var = {k: list() for k in target_batches.data_vars}
 
     n_steps = input_batches["optim_step"].size
+    n_steps_valid = input_batches_valid["optim_step"].size
+    assert (
+        n_steps_valid <= n_steps
+    ), f"Number of validation steps ({n_steps_valid}) must be less than or equal to the number of training steps ({n_steps})"
+    n_steps_valid_inc = n_steps // n_steps_valid
 
     if emulator.mpi_rank == 0:
         progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
 
     # make a deep copy of slice 0
     sl = slice(0, num_gpus)
-    i_batches=input_batches.isel(optim_step=sl).copy(deep=True)
-    t_batches=target_batches.isel(optim_step=sl).copy(deep=True)
-    f_batches=forcing_batches.isel(optim_step=sl).copy(deep=True)
+    i_batches = input_batches.isel(optim_step=sl).copy(deep=True)
+    t_batches = target_batches.isel(optim_step=sl).copy(deep=True)
+    f_batches = forcing_batches.isel(optim_step=sl).copy(deep=True)
+    i_batches_valid = input_batches_valid.isel(optim_step=sl).copy(deep=True)
+    t_batches_valid = target_batches_valid.isel(optim_step=sl).copy(deep=True)
+    f_batches_valid = forcing_batches_valid.isel(optim_step=sl).copy(deep=True)
+
+    loss_avg = 0
+    loss_valid_avg = 0
+    mean_grad_avg = 0
 
     for k in range(0, n_steps, num_gpus):
         # When the number of batches is not evenly divisible by num_gpus
@@ -275,19 +349,54 @@ def optimize(
         # is carried out, and sneakly update its values. If you use xarray update/copy etc
         # the cache system somehow notices, and either becomes slow or messes up the result
         # Copying variable values individually avoids both, fast and produces same results as before
+
+        # training batches
         sl = slice(k, k + num_gpus)
-        i1_batches=input_batches.isel(optim_step=sl)
-        t1_batches=target_batches.isel(optim_step=sl)
-        f1_batches=forcing_batches.isel(optim_step=sl)
+        i1_batches = input_batches.isel(optim_step=sl)
+        t1_batches = target_batches.isel(optim_step=sl)
+        f1_batches = forcing_batches.isel(optim_step=sl)
+
         for var_name, var in i1_batches.data_vars.items():
-            i_batches[var_name] = i_batches[var_name].copy(deep=False,data=var.values)
+            i_batches[var_name] = i_batches[var_name].copy(deep=False, data=var.values)
         for var_name, var in t1_batches.data_vars.items():
-            t_batches[var_name] = t_batches[var_name].copy(deep=False,data=var.values)
+            t_batches[var_name] = t_batches[var_name].copy(deep=False, data=var.values)
         for var_name, var in f1_batches.data_vars.items():
-            f_batches[var_name] = f_batches[var_name].copy(deep=False,data=var.values)
+            f_batches[var_name] = f_batches[var_name].copy(deep=False, data=var.values)
+
+        # validation batches
+        if (k % n_steps_valid_inc) == 0:
+            k = k // n_steps_valid_inc
+            sl = slice(k, k + num_gpus)
+            i1_batches_valid = input_batches_valid.isel(optim_step=sl)
+            t1_batches_valid = target_batches_valid.isel(optim_step=sl)
+            f1_batches_valid = forcing_batches_valid.isel(optim_step=sl)
+
+            for var_name, var in i1_batches_valid.data_vars.items():
+                i_batches_valid[var_name] = i_batches_valid[var_name].copy(
+                    deep=False, data=var.values
+                )
+            for var_name, var in t1_batches_valid.data_vars.items():
+                t_batches_valid[var_name] = t_batches_valid[var_name].copy(
+                    deep=False, data=var.values
+                )
+            for var_name, var in f1_batches_valid.data_vars.items():
+                f_batches_valid[var_name] = f_batches_valid[var_name].copy(
+                    deep=False, data=var.values
+                )
+            skip_valid = False
+        else:
+            prev_loss_valid = loss_valid
+            skip_valid = True
 
         # call optimize
-        params, loss, diagnostics, opt_state, grads = optimize.optim_step_jitted(
+        (
+            params,
+            loss,
+            diagnostics,
+            opt_state,
+            grads,
+            loss_valid,
+        ) = optimize.optim_step_jitted(
             params=params,
             state=state,
             opt_state=opt_state,
@@ -295,12 +404,24 @@ def optimize(
             input_batches=i_batches,
             target_batches=t_batches,
             forcing_batches=f_batches,
+            input_batches_valid=None if skip_valid else i_batches_valid,
+            target_batches_valid=None if skip_valid else t_batches_valid,
+            forcing_batches_valid=None if skip_valid else f_batches_valid,
         )
+
+        # when we don't compute validation, set to previous value
+        if loss_valid is None:
+            loss_valid = prev_loss_valid
+
+        # average loss per chunk
+        loss_avg += loss
+        loss_valid_avg += loss_valid
 
         # update progress bar from rank 0
         if emulator.mpi_rank == 0:
             optim_steps.append(k // num_gpus)
             loss_values.append(loss)
+            loss_valid_values.append(loss_valid)
             for key, val in diagnostics.items():
                 loss_by_var[key].append(val)
 
@@ -309,12 +430,23 @@ def optimize(
                     tree_util.tree_map(lambda x: np.abs(x).mean(), grads)
                 )[0]
             )
+            mean_grad_avg += mean_grad
+
             progress_bar.set_description(
-                f"[{emulator.mpi_rank}] loss = {loss:.5f}, mean(|grad|) = {mean_grad:.8f}"
+                f"[{emulator.mpi_rank}] loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
             )
             progress_bar.update(num_gpus)
 
     if emulator.mpi_rank == 0:
+        # update progress bar one last time with average loss/grad values per chunk
+        N = len(loss_values)
+        loss_avg /= N
+        loss_valid_avg /= N
+        mean_grad_avg /= N
+
+        progress_bar.set_description(
+            f"[{emulator.mpi_rank}] loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}"
+        )
         progress_bar.close()
 
     # save losses for each batch
@@ -340,6 +472,12 @@ def optimize(
             coords={"optim_step": loss_ds["optim_step"]},
             dims=("optim_step",),
             attrs={"long_name": "loss function value"},
+        )
+        loss_ds["loss_valid"] = xr.DataArray(
+            loss_valid_values,
+            coords={"optim_step": loss_ds["optim_step"]},
+            dims=("optim_step",),
+            attrs={"long_name": "validation loss function value"},
         )
         loss_ds["loss_by_var"] = xr.DataArray(
             np.vstack(list(loss_by_var.values())),

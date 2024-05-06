@@ -90,6 +90,14 @@ if __name__ == "__main__":
         mode="testing" if args.test else "training",
     )
 
+    # validation
+    if not args.test:
+        generator_valid = DataGenerator(
+            emulator=gufs,
+            n_optim_steps=gufs.steps_per_chunk,
+            mode="validation",
+        )
+
     # load weights or initialize a random model
     checkpoint_dir = f"{gufs.local_store_path}/models"
     ckpt_id = args.id
@@ -124,7 +132,9 @@ if __name__ == "__main__":
                 # get chunk of data in parallel with NN optimization
                 if gufs.chunks_per_epoch > 1:
                     generator.generate()
+                    generator_valid.generate()
                 data = generator.get_data()
+                data_valid = generator_valid.get_data()
 
                 # optimize
                 params, loss = optimize(
@@ -135,6 +145,9 @@ if __name__ == "__main__":
                     input_batches=data["inputs"],
                     target_batches=data["targets"],
                     forcing_batches=data["forcings"],
+                    input_batches_valid=data_valid["inputs"],
+                    target_batches_valid=data_valid["targets"],
+                    forcing_batches_valid=data_valid["forcings"],
                 )
 
                 # save weights
