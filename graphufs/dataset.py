@@ -14,6 +14,11 @@ class Dataset():
     Generic dataset for Replay Data that should work with StackedGraphCast, and torch or tensorflow
     """
 
+    # we should probably better separate emulator into data and model stuff? IDK
+    @property
+    def batch_size(self):
+        return self.emulator.batch_size
+
     @property
     def xds(self) -> xr.Dataset:
         """
