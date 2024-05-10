@@ -76,8 +76,8 @@ def init_model(emulator, gds, last_input_channel_mapping):
         return predictor(inputs)
 
     inputs, _ = gds[0]
-    init_jitted = jit(run_forward.init)
-    params, state = init_jitted(
+    #init_jitted = jit(run_forward.init)
+    params, state = run_forward.init(
         rng=PRNGKey(emulator.init_rng_seed),
         emulator=emulator,
         last_input_channel_mapping=last_input_channel_mapping,
@@ -202,7 +202,8 @@ def optimize(
     loss_values = []
     loss_by_channel = []
 
-    n_steps = len(generator)
+    n_steps = generator.epoch_size # for tensorflow... ugh
+    print("n_steps: ", n_steps)
 
     progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
     for k, (input_batches, target_batches) in enumerate(generator):
@@ -217,6 +218,7 @@ def optimize(
         )
 
         # update progress bar from rank 0
+        print(k, loss, diagnostics)
         optim_steps.append(k)
         loss_values.append(loss)
         loss_by_channel.append(diagnostics)
@@ -234,6 +236,8 @@ def optimize(
     progress_bar.close()
 
     # save losses for each batch
+    print("input: ", input_batches)
+    print(loss)
     loss_ds = xr.Dataset()
     loss_fname = os.path.join(emulator.local_store_path, "loss.nc")
     previous_optim_steps = 0

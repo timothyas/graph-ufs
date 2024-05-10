@@ -12,6 +12,7 @@ from graphufs.stacked_training import (
     init_model,
 )
 from graphufs.torch import Dataset, DataLoader
+from graphufs.tensorflow import Dataset
 
 from graphufs.utils import get_last_input_mapping
 from graphufs import (
@@ -23,7 +24,6 @@ from graphufs import (
     set_emulator_options,
     init_devices,
 )
-from torch.utils.data import DataLoader as TorchDataLoader
 import jax
 
 from simple_emulator import P0Emulator
@@ -47,15 +47,25 @@ if __name__ == "__main__":
     init_devices(gufs)
 
     # data generators
-    training_data = Dataset(gufs, mode="training")
-    # this loads the data in ... suboptimal I know
-    training_data.xds.load();
-    generator = DataLoader(
-        training_data,
-        batch_size=gufs.batch_size,
-        shuffle=True,
+    training_data = Dataset(
+        gufs,
+        mode="training",
+        preload_batch=True,
         drop_last=True,
     )
+    # this loads the data in ... suboptimal I know
+    training_data.xds.load();
+    # PyTorch method
+    #generator = DataLoader(
+    #    training_data,
+    #    batch_size=gufs.batch_size,
+    #    shuffle=True,
+    #    drop_last=True,
+    #)
+    # TensorFlow method
+    generator = training_data.get_dataset()
+    # we could now do something like
+    #generator.prefetch(tf.data.AUTOTUNE)
 
     # compute loss function weights once
     weights = gufs.calc_loss_weights(training_data)
