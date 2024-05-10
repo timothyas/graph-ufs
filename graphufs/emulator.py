@@ -1,5 +1,6 @@
 import os
 import logging
+import argparse
 import math
 import yaml
 import warnings
@@ -17,7 +18,11 @@ from graphcast.data_utils import extract_inputs_targets_forcings
 from graphcast.model_utils import dataset_to_stacked
 from graphcast.losses import normalized_level_weights, normalized_latitude_weights
 
-from .utils import get_channel_index, get_last_input_mapping
+from .utils import (
+    get_channel_index, get_last_input_mapping,
+    add_emulator_arguments, set_emulator_options
+)
+
 
 class ReplayEmulator:
     """An emulator based on UFS Replay data. This manages all model configuration settings and normalization fields. Currently it is designed to be inherited for a specific use-case, and this could easily be generalized to read in settings via a configuration file (yaml, json, etc). Be sure to register any inherited class as a pytree for it to work with JAX.
@@ -346,7 +351,7 @@ class ReplayEmulator:
                 xds_on_disk.close()
                 logging.info(f"Downloading missing {mode} data for {len(missing_dates)} time stamps.")
                 # download and write missing dates to disk
-           
+
                 missing_xds = self.open_dataset() # PS I added this helper in the last PR
                 missing_xds = self.subsample_dataset(missing_xds, new_time=list(missing_dates))
                 missing_xds.to_zarr(local_data_path, append_dim="time")
@@ -632,6 +637,41 @@ class ReplayEmulator:
         chunksize = {k:v for k,v in chunksize.items() if k in newds.dims}
         newds = newds.chunk(chunksize)
         return newds
+
+    @classmethod
+    def from_parser(cls):
+        """Parse CLI arguments."""
+
+        # parse arguments
+        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+        parser.add_argument(
+            "--test",
+            dest="test",
+            action="store_true",
+            required=False,
+            help="Test model specified with --id. Otherwise train model.",
+        )
+        parser.add_argument(
+            "--id",
+            "-i",
+            dest="id",
+            required=False,
+            type=int,
+            default=-1,
+            help="ID of neural networks to resume training/testing from.",
+        )
+
+        # add arguments from emulator
+        add_emulator_arguments(cls, parser)
+
+        # parse CLI args
+        args = parser.parse_args()
+
+        # override options in emulator class by those from CLI
+        set_emulator_options(cls, args)
+        emulator = cls()
+
+        return emulator, args
 
 
     def _tree_flatten(self):

@@ -77,6 +77,17 @@ class P0Emulator(ReplayEmulator):
     radius_query_fraction_edge_length = 0.6
     mesh2grid_edge_normalization_factor = 0.6180338738074472
 
+    # loss weighting, defaults to GraphCast implementation
+    weight_loss_per_latitude = True
+    weight_loss_per_level = True
+    loss_weights_per_variable = {
+        "tmp2m"         : 1.0,
+        "ugrd10m"       : 0.1,
+        "vgrd10m"       : 0.1,
+        "pressfc"       : 0.1,
+        "prateb_ave"    : 0.1,
+    }
+
     # this is used for initializing the state in the gradient computation
     grad_rng_seed = 0
     init_rng_seed = 0

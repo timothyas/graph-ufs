@@ -1,4 +1,5 @@
 import itertools
+import argparse
 import logging
 import threading
 from graphcast import checkpoint, graphcast
@@ -271,7 +272,7 @@ def add_emulator_arguments(emulator, parser) -> None:
                 parser.add_argument(
                     name,
                     dest=k,
-                    action="store_true",
+                    type=str2bool,
                     required=False,
                     help=f"{k}: default {v}",
                 )
@@ -305,3 +306,13 @@ def set_emulator_options(emulator, args) -> None:
                     value = attr_type(value)
                 setattr(emulator, arg_name, value)
 
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')

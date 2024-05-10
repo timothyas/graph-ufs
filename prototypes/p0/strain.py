@@ -19,15 +19,12 @@ from graphufs import (
     save_checkpoint,
     convert_wb2_format,
     compute_rmse_bias,
-    add_emulator_arguments,
-    set_emulator_options,
     init_devices,
 )
 from torch.utils.data import DataLoader as TorchDataLoader
 import jax
 
 from simple_emulator import P0Emulator
-from train import parse_args
 
 if __name__ == "__main__":
 
@@ -38,10 +35,7 @@ if __name__ == "__main__":
     )
 
     # parse arguments
-    args = parse_args()
-
-    # initialize emulator
-    gufs = P0Emulator()
+    gufs, args = P0Emulator.from_parser()
 
     # for multi-gpu training
     init_devices(gufs)
