@@ -163,13 +163,9 @@ class ReplayEmulator:
         self.delta_t = pd.Timedelta(self.delta_t)
         self.input_duration = pd.Timedelta(self.input_duration)
 
-        # get normalization statistics
+        # have to set normalization statistics explicitly
         self.norm = {}
         self.stacked_norm = {}
-        self.norm["mean"], self.norm["std"], self.norm["stddiff"] = self.load_normalization()
-        for key in self.norm.keys():
-            input_norms, target_norms = self.normalization_to_stacked(self.norm[key], preserved_dims=tuple())
-            self.stacked_norm[key] = {"inputs": input_norms, "targets": target_norms}
 
 
     @property
@@ -495,11 +491,8 @@ class ReplayEmulator:
                 yield inputs, targets, forcings, inittimes
 
 
-    def load_normalization(self, **kwargs):
+    def set_normalization(self, **kwargs):
         """Load the normalization fields into memory
-
-        Note:
-            This uses values for the ``year_progress`` and ``day_progress`` fields in each dataset (mean, std, diffs_std) that were copied from the graphcast demo in order to get moving. These should be recomputed and the lines in this method that set these copied values should be removed.
 
         Returns:
             mean_by_level, stddev_by_level, diffs_stddev_by_level (xarray.Dataset): with normalization fields
@@ -508,14 +501,18 @@ class ReplayEmulator:
         def open_normalization(component, **kwargs):
 
             # try to read locally first
-            if self.local_store_path is not None:
-                local_path = os.path.join(self.local_store_path, os.path.basename(self.norm_urls[component]))
+            local_path = os.path.join(
+                self.local_store_path,
+                "normalization",
+                os.path.basename(self.norm_urls[component]),
+            )
 
-                foundit = False
-                if os.path.isdir(local_path):
-                    xds = xr.open_zarr(local_path)
-                    xds = xds.load()
-                    foundit = True
+            foundit = False
+            if os.path.isdir(local_path):
+                xds = xr.open_zarr(local_path)
+                xds = xds.load()
+                foundit = True
+
             if not foundit:
                 xds = xr.open_zarr(self.norm_urls[component], **kwargs)
                 myvars = list(x for x in self.all_variables if x in xds)
@@ -526,10 +523,49 @@ class ReplayEmulator:
                 xds.to_zarr(local_path)
             return xds
 
-        mean_by_level = open_normalization("mean")
-        stddev_by_level = open_normalization("std")
-        diffs_stddev_by_level = open_normalization("stddiff")
-        return mean_by_level, stddev_by_level, diffs_stddev_by_level
+        for key in ["mean", "std", "stddiff"]:
+            self.norm[key] = open_normalization(key)
+
+    def set_stacked_normalization(self):
+
+        assert len(self.norm["mean"]) > 0, "normalization not set, call Emulator.set_normalization()"
+
+        def open_normalization(component):
+
+            # try to read locally first
+            inputs_path = os.path.join(
+                self.local_store_path,
+                "stacked-normalization",
+                "inputs",
+                os.path.basename(self.norm_urls[component]),
+            )
+            targets_path = os.path.join(
+                self.local_store_path,
+                "stacked-normalization",
+                "targets",
+                os.path.basename(self.norm_urls[component]),
+            )
+
+            foundit = False
+            if os.path.isdir(inputs_path) and os.path.isdir(targets_path):
+                inputs = xr.open_zarr(inputs_path)
+                inputs = inputs.load()
+                targets = xr.open_zarr(targets_path)
+                targets = targets.load()
+                foundit = True
+
+            if not foundit:
+                inputs, targets = self.normalization_to_stacked(self.norm[component])
+                inputs = inputs.load()
+                targets = targets.load()
+                inputs.to_zarr(inputs_path)
+                targets.to_zarr(targets_path)
+            return inputs.data, targets.data
+
+        for key in self.norm.keys():
+            input_norms, target_norms = self.normalization_to_stacked(self.norm[key], preserved_dims=tuple())
+            self.stacked_norm[key] = {"inputs": input_norms, "targets": target_norms}
+
 
     def normalization_to_stacked(self, xds, **kwargs):
         """
@@ -558,7 +594,7 @@ class ReplayEmulator:
             ],
             dim="channels",
         )
-        return input_norms.data, target_norms.data
+        return input_norms, target_norms
 
 
     def calc_loss_weights(self, gds):
