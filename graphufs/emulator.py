@@ -193,6 +193,10 @@ class ReplayEmulator:
         kw["target_lead_times"] = self.target_lead_time
         return kw
 
+    @property
+    def local_data_path(self):
+        return os.path.join(self.local_store_path, "data.zarr")
+
 
     def open_dataset(self, **kwargs):
         xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"}, **kwargs)
@@ -294,6 +298,41 @@ class ReplayEmulator:
             bds = bds.drop(["cftime", "ftime"])
         return bds
 
+    def get_the_data(
+        self,
+        all_new_time=None,
+        mode="training",
+    ):
+        """Handle the local storage, caching, missing dates stuff here, pass to get_batches to batch it up"""
+
+        all_new_time = all_new_time if all_new_time is not None else self.get_time(mode=mode)
+        # download only missing dates and write them to disk
+        if self.no_cache_data or not os.path.exists(self.local_data_path):
+            logging.info(f"Downloading missing {mode} data for {len(all_new_time)} time stamps.")
+            xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
+            all_xds = self.subsample_dataset(xds, new_time=all_new_time)
+            if not self.no_cache_data:
+                all_xds.to_zarr(self.local_data_path)
+                all_xds.close()
+                all_xds = xr.open_zarr(self.local_data_path)
+        else:
+            # figure out missing dates
+            xds_on_disk = xr.open_zarr(self.local_data_path)
+            missing_dates = set(all_new_time.values) - set(xds_on_disk.time.values)
+            if len(missing_dates) > 0:
+                xds_on_disk.close()
+                logging.info(f"Downloading missing {mode} data for {len(missing_dates)} time stamps.")
+                # download and write missing dates to disk
+
+                missing_xds = self.open_dataset()
+                missing_xds = self.subsample_dataset(missing_xds, new_time=list(missing_dates))
+                missing_xds.to_zarr(self.local_data_path, append_dim="time")
+                # now that the data on disk is complete, reopen the dataset from disk
+                all_xds = xr.open_zarr(self.local_data_path)
+            else:
+                all_xds = xds_on_disk
+
+        return all_xds
 
     def get_batches(
         self,
@@ -316,7 +355,6 @@ class ReplayEmulator:
             inputs, targets, forcings (xarray.Dataset): with new dimension "batch"
                 and appropriate fields for each dataset, based on the variables in :attr:`task_config`
         """
-        local_data_path = os.path.join(self.local_store_path, "data.zarr")
         all_new_time = self.get_time(mode=mode)
 
         # split the dataset across nodes
@@ -330,32 +368,8 @@ class ReplayEmulator:
             all_new_time = all_new_time[start:end]
             logging.info(f"Data for {mode} MPI rank {self.mpi_rank}: {all_new_time[0]} to {all_new_time[-1]} : {len(all_new_time)} time stamps.")
 
-        # download only missing dates and write them to disk
-        if self.no_cache_data or not os.path.exists(local_data_path):
-            logging.info(f"Downloading missing {mode} data for {len(all_new_time)} time stamps.")
-            xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
-            all_xds = self.subsample_dataset(xds, new_time=all_new_time)
-            if not self.no_cache_data:
-                all_xds.to_zarr(local_data_path)
-                all_xds.close()
-                all_xds = xr.open_zarr(local_data_path)
-        else:
-            # figure out missing dates
-            xds_on_disk = xr.open_zarr(local_data_path)
-            missing_dates = set(all_new_time.values) - set(xds_on_disk.time.values)
-            if len(missing_dates) > 0:
-                xds_on_disk.close()
-                logging.info(f"Downloading missing {mode} data for {len(missing_dates)} time stamps.")
-                # download and write missing dates to disk
 
-                missing_xds = self.open_dataset() # PS I added this helper in the last PR
-                missing_xds = self.subsample_dataset(missing_xds, new_time=list(missing_dates))
-                missing_xds.to_zarr(local_data_path, append_dim="time")
-                # now that the data on disk is complete, reopen the dataset from disk
-                all_xds = xr.open_zarr(local_data_path)
-            else:
-                all_xds = xds_on_disk
-
+        all_xds = self.get_the_data(self, all_new_time=all_new_time, mode=mode)
         # split dataset into chunks
         chunk_size = len(all_new_time) // self.chunks_per_epoch
         all_new_time_chunks = []

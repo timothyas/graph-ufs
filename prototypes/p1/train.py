@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 from graphufs import (
     DataGenerator,
@@ -23,9 +24,5 @@ if __name__ == "__main__":
     # 1. Read remote normalization, store locally, and set to p1
     p1.set_normalization()
 
-    # data generators
-    trainer = DataGenerator(
-        emulator=gufs,
-        n_optim_steps=gufs.steps_per_chunk,
-        mode="training",
-    )
+    # 2. Pull the training data and store to data/data.zarr
+    p1.get_the_data(mode="training")
