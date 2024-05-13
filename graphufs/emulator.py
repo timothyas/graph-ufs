@@ -423,6 +423,9 @@ class ReplayEmulator:
                     n_optim_steps = n_max_optim_steps
                     warnings.warn(f"There's less data than the number of batches requested, reducing n_optim_steps to {n_optim_steps}")
 
+                if self.steps_per_chunk is None:
+                    self.steps_per_chunk = n_optim_steps
+
                 # create a new time vector with desired delta_t
                 # this has to end such that we can pull an entire forecast from the training data
                 all_initial_times = pd.date_range(

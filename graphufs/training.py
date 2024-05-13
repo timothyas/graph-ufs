@@ -131,6 +131,7 @@ def optimize(
     emulator,
     training_data,
     validation_data,
+    opt_state=None,
 ):
     """Optimize the model parameters by running through all optim_steps in data
 
@@ -148,7 +149,7 @@ def optimize(
             this doesn't have gradient info, but we could add that
     """
 
-    opt_state = optimizer.init(params)
+    opt_state = optimizer.init(params) if opt_state is None else opt_state
     num_gpus = emulator.num_gpus
     mpi_size = emulator.mpi_size
     use_jax_distributed = emulator.use_jax_distributed
@@ -329,6 +330,7 @@ def optimize(
     optim_steps = []
     loss_values = []
     loss_valid_values = []
+    learning_rates = []
     loss_by_var = {k: list() for k in training_data["targets"].data_vars}
 
     n_steps = len(training_data["inputs"]["optim_step"])
@@ -415,6 +417,8 @@ def optimize(
             target_batches=t_batches,
             forcing_batches=f_batches,
         )
+        #lr = opt_state.hyperparams["learning_rate"]
+        #learning_rates.append(lr)
 
         # call validation loss
         if (k % n_steps_valid_inc) == 0:
@@ -498,6 +502,11 @@ def optimize(
             np.vstack(list(loss_by_var.values())),
             dims=("var_index", "optim_step"),
         )
+        #loss_ds["learning_rate"] = xr.DataArray(
+        #    learning_rates,
+        #    coords={"optim_step": loss_ds["optim_step"]},
+        #    dims=("optim_step",),
+        #)
 
         # concatenate losses and store
         if os.path.exists(loss_fname):
@@ -506,7 +515,7 @@ def optimize(
             stored_loss_ds = loss_ds
         stored_loss_ds.to_netcdf(loss_fname)
 
-    return params, loss_ds
+    return params, loss_ds, opt_state
 
 
 def predict(
