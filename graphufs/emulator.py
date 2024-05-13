@@ -13,7 +13,8 @@ import xarray as xr
 from jax import tree_util
 
 from ufs2arco.regrid.ufsregridder import UFSRegridder
-from graphcast.graphcast import ModelConfig, TaskConfig
+from graphcast import checkpoint
+from graphcast.graphcast import ModelConfig, TaskConfig, CheckPoint
 from graphcast.data_utils import extract_inputs_targets_forcings
 from graphcast.model_utils import dataset_to_stacked
 from graphcast.losses import normalized_level_weights, normalized_latitude_weights
@@ -197,6 +198,10 @@ class ReplayEmulator:
     def local_data_path(self):
         return os.path.join(self.local_store_path, "data.zarr")
 
+    @property
+    def checkpoint_dir(self):
+        return os.path.join(self.local_store_path, "models")
+
 
     def open_dataset(self, **kwargs):
         xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"}, **kwargs)
@@ -369,7 +374,7 @@ class ReplayEmulator:
             logging.info(f"Data for {mode} MPI rank {self.mpi_rank}: {all_new_time[0]} to {all_new_time[-1]} : {len(all_new_time)} time stamps.")
 
 
-        all_xds = self.get_the_data(self, all_new_time=all_new_time, mode=mode)
+        all_xds = self.get_the_data(all_new_time=all_new_time, mode=mode)
         # split dataset into chunks
         chunk_size = len(all_new_time) // self.chunks_per_epoch
         all_new_time_chunks = []
@@ -722,6 +727,51 @@ class ReplayEmulator:
         emulator = cls()
 
         return emulator, args
+
+    def save_checkpoint(self, params, id) -> None:
+        """Store checkpoint.
+
+        Args:
+            params: the parameters (weights) of the model
+            ckpt_path (str): path to model
+            id (int): the stored iteration ID
+        """
+
+        ckpt_path = os.path.join(self.checkpoint_dir, f"model_{id}.npz")
+        if not os.path.isdir(self.checkpoint_dir):
+            os.makedirs(self.checkpoint_dir)
+
+        with open(ckpt_path, "wb") as f:
+            ckpt = CheckPoint(
+                params=params,
+                model_config=self.model_config,
+                task_config=self.task_config,
+                description=f"GraphCast model trained on UFS Replay data, ID = {id}",
+                license="Public domain",
+            )
+            checkpoint.dump(f, ckpt)
+
+
+
+    def load_checkpoint(self, id, verbose: bool = False):
+        """Load checkpoint.
+
+        Args:
+            id (int): integer ID num to load
+            verbose (bool, optional): print metadata about the model
+        """
+        ckpt_path = os.path.join(self.checkpoint_dir, f"model_{id}.npz")
+
+        with open(ckpt_path, "rb") as f:
+            ckpt = checkpoint.load(f, CheckPoint)
+        params = ckpt.params
+        state = {}
+        model_config = ckpt.model_config
+        task_config = ckpt.task_config
+        if verbose:
+            logging.info("Model description:\n", ckpt.description, "\n")
+            logging.info("Model license:\n", ckpt.license, "\n")
+        return params, state
 
 
     def _tree_flatten(self):

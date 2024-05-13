@@ -99,8 +99,7 @@ def init_model(emulator, data: dict):
         predictor = construct_wrapped_graphcast(emulator)
         return predictor(inputs, targets_template=targets_template, forcings=forcings)
 
-    init_jitted = jit(run_forward.init)
-    params, state = init_jitted(
+    params, state = run_forward.init(
         rng=PRNGKey(emulator.init_rng_seed),
         emulator=emulator,
         inputs=data["inputs"].sel(optim_step=0),

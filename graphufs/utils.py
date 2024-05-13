@@ -2,7 +2,6 @@ import itertools
 import argparse
 import logging
 import threading
-from graphcast import checkpoint, graphcast
 import xarray as xr
 
 def get_chunk_data(generator, data: dict):
@@ -93,43 +92,6 @@ class DataGenerator:
         else:
             return self.data_0;
 
-
-def load_checkpoint(ckpt_path: str, verbose: bool = False):
-    """Load checkpoint.
-
-    Args:
-        ckpt_path (str): path to model
-        verbose (bool, optional): print metadata about the model
-    """
-    with open(ckpt_path, "rb") as f:
-        ckpt = checkpoint.load(f, graphcast.CheckPoint)
-    params = ckpt.params
-    state = {}
-    model_config = ckpt.model_config
-    task_config = ckpt.task_config
-    if verbose:
-        logging.info("Model description:\n", ckpt.description, "\n")
-        logging.info("Model license:\n", ckpt.license, "\n")
-    return params, state
-
-
-def save_checkpoint(gufs, params, ckpt_path: str) -> None:
-    """Load checkpoint.
-
-    Args:
-        gufs: emulator class
-        params: the parameters (weights) of the model
-        ckpt_path (str): path to model
-    """
-    with open(ckpt_path, "wb") as f:
-        ckpt = graphcast.CheckPoint(
-            params=params,
-            model_config=gufs.model_config,
-            task_config=gufs.task_config,
-            description="GraphCast model trained on UFS data",
-            license="Public domain",
-        )
-        checkpoint.dump(f, ckpt)
 
 def product_dict(**kwargs):
     keys = kwargs.keys()
