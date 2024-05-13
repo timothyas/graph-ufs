@@ -71,16 +71,13 @@ def init_model(emulator, gds, last_input_channel_mapping):
     """
 
     @hk.transform_with_state
-    def run_forward(emulator, last_input_channel_mapping, inputs):
+    def run_forward(inputs):
         predictor = construct_wrapped_graphcast(emulator, last_input_channel_mapping)
         return predictor(inputs)
 
     inputs, _ = gds[0]
-    init_jitted = jit(run_forward.init)
-    params, state = init_jitted(
+    params, state = run_forward.init(
         rng=PRNGKey(emulator.init_rng_seed),
-        emulator=emulator,
-        last_input_channel_mapping=last_input_channel_mapping,
         inputs=inputs,
     )
     return params, state

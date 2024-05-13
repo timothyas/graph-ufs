@@ -526,13 +526,12 @@ class ReplayEmulator:
                 os.path.basename(self.norm_urls[component]),
             )
 
-            foundit = False
             if os.path.isdir(local_path):
                 xds = xr.open_zarr(local_path)
                 xds = xds.load()
                 foundit = True
 
-            if not foundit:
+            else:
                 xds = xr.open_zarr(self.norm_urls[component], **kwargs)
                 myvars = list(x for x in self.all_variables if x in xds)
                 xds = xds[myvars]
@@ -565,24 +564,24 @@ class ReplayEmulator:
                 os.path.basename(self.norm_urls[component]),
             )
 
-            foundit = False
             if os.path.isdir(inputs_path) and os.path.isdir(targets_path):
                 inputs = xr.open_zarr(inputs_path)
-                inputs = inputs.load()
+                inputs = inputs["inputs"].load()
                 targets = xr.open_zarr(targets_path)
-                targets = targets.load()
-                foundit = True
+                targets = targets["targets"].load()
 
-            if not foundit:
-                inputs, targets = self.normalization_to_stacked(self.norm[component])
+            else:
+                inputs, targets = self.normalization_to_stacked(self.norm[component], preserved_dims=tuple())
+                ds = xr.Dataset()
                 inputs = inputs.load()
                 targets = targets.load()
-                inputs.to_zarr(inputs_path)
-                targets.to_zarr(targets_path)
+                inputs.to_dataset(name="inputs").to_zarr(inputs_path)
+                targets.to_dataset(name="targets").to_zarr(targets_path)
             return inputs.data, targets.data
 
         for key in self.norm.keys():
-            input_norms, target_norms = self.normalization_to_stacked(self.norm[key], preserved_dims=tuple())
+            self.stacked_norm[key] = dict()
+            input_norms, target_norms = open_normalization(key)
             self.stacked_norm[key] = {"inputs": input_norms, "targets": target_norms}
 
 
@@ -751,7 +750,9 @@ class ReplayEmulator:
             )
             checkpoint.dump(f, ckpt)
 
-
+    def checkpoint_exists(self, id):
+        ckpt_path = os.path.join(self.checkpoint_dir, f"model_{id}.npz")
+        return os.path.exists(ckpt_path)
 
     def load_checkpoint(self, id, verbose: bool = False):
         """Load checkpoint.
