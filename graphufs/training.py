@@ -109,18 +109,20 @@ def init_model(emulator, data: dict):
     )
     return params, state
 
+# Remove the first dimension (device dimension), which is added due to pmap
+def remove_first_dim(d):
+    return tree_util.tree_map(lambda x: x[0], d)
+
+def aggregate_across_nodes(d):
+    def aggregate(d):
+        d, _ = mpi4jax.allreduce(d, op=MPI.SUM, comm=MPI.COMM_WORLD)
+        d = d / mpi_size
+        return d
+
+    return tree_util.tree_map(lambda x: aggregate(x), d)
 
 def optimize(
-    params,
-    state,
-    optimizer,
-    emulator,
-    input_batches,
-    target_batches,
-    forcing_batches,
-    input_batches_valid,
-    target_batches_valid,
-    forcing_batches_valid,
+    params, state, optimizer, emulator, training_data, validation_data,
 ):
     """Optimize the model parameters by running through all optim_steps in data
 
@@ -129,8 +131,8 @@ def optimize(
         state (dict): this is empty, but for now has to be here
         optimizer (Callable, optax.optimizer): see `here <https://optax.readthedocs.io/en/latest/api/optimizers.html>`_
         emulator (ReplayEmulator): the emulator object
-        input_batches, training_batches, forcing_batches (xarray.Dataset): with data needed for training
-        input_batches_valid, training_batches_valid, forcing_batches_valid (xarray.Dataset): validation data
+        training_data (dict): with data needed for training
+        validation_data (dict): with data for validation
 
     Returns:
         params (dict): optimized model parameters
@@ -151,6 +153,38 @@ def optimize(
             lambda x: unwrap_data(x.mean(), require_jax=True), (loss, diagnostics)
         )
 
+    def vloss(params, state, input_batches, target_batches, forcing_batches):
+        def ploss(inputs, targets, forcings):
+            (loss, _), _ = loss_fn.apply(
+                params=params,
+                state=state,
+                emulator=emulator,
+                inputs=input_batches,
+                targets=target_batches,
+                forcings=forcing_batches,
+                rng=PRNGKey(0),
+            )
+
+            if num_gpus > 1:
+                loss = pmean(loss, dim="optim_step")
+            if (not use_jax_distributed) and (mpi_size > 1):
+                # use a helpfer function for grads and other trees
+                loss = aggregate_across_nodes(loss)
+            return loss
+
+
+        if num_gpus > 1:
+
+            # pmap batch processing into multiple GPUs
+            loss = pmap(ploss, dim="optim_step")(input_batches, target_batches, forcing_batches)
+            loss = remove_first_dim(loss)
+
+        else:
+            loss = ploss(input_batches, target_batches, forcing_batches)
+
+        return loss
+
+
     def optim_step(
         params,
         state,
@@ -159,9 +193,6 @@ def optimize(
         input_batches,
         target_batches,
         forcing_batches,
-        input_batches_valid,
-        target_batches_valid,
-        forcing_batches_valid,
     ):
         """Note that this function has to be definied within optimize so that we do not
         pass optimizer as an argument. Otherwise we get some craazy jax errors"""
@@ -173,11 +204,7 @@ def optimize(
             return loss, (diagnostics, next_state)
 
         # process one batch per GPU
-        def process_batch(
-            inputs, targets, forcings, inputs_valid, targets_valid, forcings_valid
-        ):
-
-            # training pass
+        def process_batch(inputs, targets, forcings):
             (loss, (diagnostics, next_state)), grads = value_and_grad(
                 _aux, has_aux=True
             )(
@@ -188,23 +215,10 @@ def optimize(
                 forcings,
             )
 
-            # validation pass
-            loss_valid = None
-            if inputs_valid is not None:
-                loss_valid, _ = _aux(
-                    params,
-                    state,
-                    inputs_valid,
-                    targets_valid,
-                    forcings_valid,
-                )
-
             # aggregate across local devices
             if num_gpus > 1:
                 grads = pmean(grads, axis_name="optim_step")
                 loss = pmean(loss, axis_name="optim_step")
-                if loss_valid is not None:
-                    loss_valid = pmean(loss_valid, axis_name="optim_step")
                 diagnostics = pmean(diagnostics, axis_name="optim_step")
                 next_state = pmean(next_state, axis_name="optim_step")
 
@@ -212,60 +226,34 @@ def optimize(
             # is turned on, there is no need for this code.
             if (not use_jax_distributed) and (mpi_size > 1):
                 # use a helpfer function for grads and other trees
-                def aggregate_across_nodes(d):
-                    def aggregate(d):
-                        d, _ = mpi4jax.allreduce(d, op=MPI.SUM, comm=MPI.COMM_WORLD)
-                        d = d / mpi_size
-                        return d
 
-                    return tree_util.tree_map(lambda x: aggregate(x), d)
 
                 loss = aggregate_across_nodes(loss)
-                if loss_valid is not None:
-                    loss_valid = aggregate_across_nodes(loss_valid)
                 grads = aggregate_across_nodes(grads)
                 diagnostics = aggregate_across_nodes(diagnostics)
                 next_state = aggregate_across_nodes(next_state)
 
-            return (loss, (diagnostics, next_state)), grads, loss_valid
+            return (loss, (diagnostics, next_state)), grads
 
         if num_gpus > 1:
             # pmap batch processing into multiple GPUs
-            (loss, (diagnostics, next_state)), grads, loss_valid = pmap(
+            (loss, (diagnostics, next_state)), grads = pmap(
                 process_batch, dim="optim_step"
-            )(
-                input_batches,
-                target_batches,
-                forcing_batches,
-                input_batches_valid,
-                target_batches_valid,
-                forcing_batches_valid,
-            )
-
-            # Remove the first dimension (device dimension), which is added due to pmap
-            def remove_first_dim(d):
-                return tree_util.tree_map(lambda x: x[0], d)
+            )(input_batches, target_batches, forcing_batches)
 
             loss = remove_first_dim(loss)
-            if loss_valid is not None:
-                loss_valid = remove_first_dim(loss_valid)
             grads = remove_first_dim(grads)
             diagnostics = remove_first_dim(diagnostics)
             next_state = remove_first_dim(next_state)
         else:
-            (loss, (diagnostics, next_state)), grads, loss_valid = process_batch(
-                input_batches,
-                target_batches,
-                forcing_batches,
-                input_batches_valid,
-                target_batches_valid,
-                forcing_batches_valid,
+            (loss, (diagnostics, next_state)), grads = process_batch(
+                input_batches, target_batches, forcing_batches
             )
 
         # update parameters
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return params, loss, diagnostics, opt_state, grads, loss_valid
+        return params, loss, diagnostics, opt_state, grads
 
     # jit optim_step only once
     if not hasattr(optimize, "optim_step_jitted"):
@@ -281,41 +269,40 @@ def optimize(
         x, *_ = optimize.optim_step_jitted(
             params=params,
             state=state,
-            opt_state=opt_state,
             emulator=emulator,
-            input_batches=input_batches.isel(optim_step=sl),
-            target_batches=target_batches.isel(optim_step=sl),
-            forcing_batches=forcing_batches.isel(optim_step=sl),
-            input_batches_valid=input_batches_valid.isel(optim_step=sl),
-            target_batches_valid=target_batches_valid.isel(optim_step=sl),
-            forcing_batches_valid=forcing_batches_valid.isel(optim_step=sl),
+            opt_state=opt_state,
+            input_batches=training_data["inputs"].isel(optim_step=sl),
+            target_batches=training_data["targets"].isel(optim_step=sl),
+            forcing_batches=training_data["forcings"].isel(optim_step=sl),
         )
-        y, *_ = optimize.optim_step_jitted(
+
+        # wait until value for x is ready i.e. until jitting completes
+        block_until_ready(x)
+        logging.info("Finished jitting optim_step")
+
+    # jit validation loss
+    if not hasattr(optimize, "vloss_jitted"):
+
+        logging.info("Started jitting validation loss")
+        optimize.vloss_jitted = jit(vloss)
+        x = optimize.vloss_jitted(
             params=params,
             state=state,
-            opt_state=opt_state,
-            emulator=emulator,
-            input_batches=input_batches.isel(optim_step=sl),
-            target_batches=target_batches.isel(optim_step=sl),
-            forcing_batches=forcing_batches.isel(optim_step=sl),
-            input_batches_valid=None,
-            target_batches_valid=None,
-            forcing_batches_valid=None,
+            input_batches=validation_data["inputs"].isel(optim_step=sl),
+            target_batches=validation_data["targets"].isel(optim_step=sl),
+            forcing_batches=validation_data["forcings"].isel(optim_step=sl),
         )
-
-        # wait until value for x,y are ready i.e. until jitting completes
         block_until_ready(x)
-        block_until_ready(y)
+        logging.info("Finished jitting validation loss")
 
-        logging.info("Finished jitting optim_step")
 
     optim_steps = []
     loss_values = []
     loss_valid_values = []
-    loss_by_var = {k: list() for k in target_batches.data_vars}
+    loss_by_var = {k: list() for k in training_data["targets"].data_vars}
 
-    n_steps = input_batches["optim_step"].size
-    n_steps_valid = input_batches_valid["optim_step"].size
+    n_steps = len(training_data["inputs"]["optim_step"])
+    n_steps_valid = len(validation_data["inputs"]["optim_step"])
     assert (
         n_steps_valid <= n_steps
     ), f"Number of validation steps ({n_steps_valid}) must be less than or equal to the number of training steps ({n_steps})"
@@ -326,12 +313,13 @@ def optimize(
 
     # make a deep copy of slice 0
     sl = slice(0, num_gpus)
-    i_batches = input_batches.isel(optim_step=sl).copy(deep=True)
-    t_batches = target_batches.isel(optim_step=sl).copy(deep=True)
-    f_batches = forcing_batches.isel(optim_step=sl).copy(deep=True)
-    i_batches_valid = input_batches_valid.isel(optim_step=sl).copy(deep=True)
-    t_batches_valid = target_batches_valid.isel(optim_step=sl).copy(deep=True)
-    f_batches_valid = forcing_batches_valid.isel(optim_step=sl).copy(deep=True)
+    i_batches = training_data["inputs"].isel(optim_step=sl).copy(deep=True)
+    t_batches = training_data["targets"].isel(optim_step=sl).copy(deep=True)
+    f_batches = training_data["forcings"].isel(optim_step=sl).copy(deep=True)
+
+    i_batches_valid = validation_data["inputs"].isel(optim_step=sl).copy(deep=True)
+    t_batches_valid = validation_data["targets"].isel(optim_step=sl).copy(deep=True)
+    f_batches_valid = validation_data["forcings"].isel(optim_step=sl).copy(deep=True)
 
     loss_avg = 0
     loss_valid_avg = 0
@@ -352,10 +340,10 @@ def optimize(
 
         # training batches
         sl = slice(k, k + num_gpus)
-        i1_batches = input_batches.isel(optim_step=sl)
-        t1_batches = target_batches.isel(optim_step=sl)
-        f1_batches = forcing_batches.isel(optim_step=sl)
 
+        i1_batches = training_data["inputs"].isel(optim_step=sl)
+        t1_batches = training_data["targets"].isel(optim_step=sl)
+        f1_batches = training_data["forcings"].isel(optim_step=sl)
         for var_name, var in i1_batches.data_vars.items():
             i_batches[var_name] = i_batches[var_name].copy(deep=False, data=var.values)
         for var_name, var in t1_batches.data_vars.items():
@@ -365,11 +353,12 @@ def optimize(
 
         # validation batches
         if (k % n_steps_valid_inc) == 0:
-            k = k // n_steps_valid_inc
-            sl = slice(k, k + num_gpus)
-            i1_batches_valid = input_batches_valid.isel(optim_step=sl)
-            t1_batches_valid = target_batches_valid.isel(optim_step=sl)
-            f1_batches_valid = forcing_batches_valid.isel(optim_step=sl)
+            kv = k // n_steps_valid_inc
+            sl = slice(kv, kv + num_gpus)
+
+            i1_batches_valid = validation_data["inputs"].isel(optim_step=sl)
+            t1_batches_valid = validation_data["targets"].isel(optim_step=sl)
+            f1_batches_valid = validation_data["forcings"].isel(optim_step=sl)
 
             for var_name, var in i1_batches_valid.data_vars.items():
                 i_batches_valid[var_name] = i_batches_valid[var_name].copy(
@@ -388,15 +377,10 @@ def optimize(
             prev_loss_valid = loss_valid
             skip_valid = True
 
+
+
         # call optimize
-        (
-            params,
-            loss,
-            diagnostics,
-            opt_state,
-            grads,
-            loss_valid,
-        ) = optimize.optim_step_jitted(
+        params, loss, diagnostics, opt_state, grads = optimize.optim_step_jitted(
             params=params,
             state=state,
             opt_state=opt_state,
@@ -404,13 +388,20 @@ def optimize(
             input_batches=i_batches,
             target_batches=t_batches,
             forcing_batches=f_batches,
-            input_batches_valid=None if skip_valid else i_batches_valid,
-            target_batches_valid=None if skip_valid else t_batches_valid,
-            forcing_batches_valid=None if skip_valid else f_batches_valid,
         )
 
+        # call validation loss
+        if (k % n_steps_valid_inc) == 0:
+            loss_valid = optimize.vloss_jitted(
+                params=params,
+                state=state,
+                input_batches=i_batches_valid,
+                target_batches=t_batches_valid,
+                forcing_batches=f_batches_valid,
+            )
+
         # when we don't compute validation, set to previous value
-        if loss_valid is None:
+        else:
             loss_valid = prev_loss_valid
 
         # average loss per chunk
@@ -431,9 +422,8 @@ def optimize(
                 )[0]
             )
             mean_grad_avg += mean_grad
-
             progress_bar.set_description(
-                f"[{emulator.mpi_rank}] loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
+                f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
             )
             progress_bar.update(num_gpus)
 
@@ -443,9 +433,8 @@ def optimize(
         loss_avg /= N
         loss_valid_avg /= N
         mean_grad_avg /= N
-
         progress_bar.set_description(
-            f"[{emulator.mpi_rank}] loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}"
+            f"loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}"
         )
         progress_bar.close()
 
@@ -460,7 +449,7 @@ def optimize(
             previous_optim_steps = len(stored_loss_ds.optim_step)
 
         loss_ds["optim_step"] = [x + previous_optim_steps for x in optim_steps]
-        loss_ds.attrs["batch_size"] = len(input_batches["batch"])
+        loss_ds.attrs["batch_size"] = len(training_data["inputs"]["batch"])
         loss_ds["var_index"] = xr.DataArray(
             np.arange(len(loss_by_var)),
             coords={"var_index": np.arange(len(loss_by_var))},
@@ -571,6 +560,7 @@ def init_devices(emulator):
 
         def format(self, record):
             record.rank = self.rank
+            record.relativeCreated = record.relativeCreated // 1000
             return super().format(record)
 
     # create logger
@@ -580,7 +570,7 @@ def init_devices(emulator):
     logger.addFilter(RankFilter(rank))
 
     formatter = RankFormatter(
-        rank, fmt="[%(relativeCreated)d ms] [Rank %(rank)d] [%(levelname)s] %(message)s"
+        rank, fmt="[%(relativeCreated)d s] [Rank %(rank)d] [%(levelname)s] %(message)s"
     )
     for handler in logger.handlers:
         handler.setFormatter(formatter)
