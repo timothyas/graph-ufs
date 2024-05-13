@@ -38,6 +38,8 @@ class ReplayEmulator:
         "std": "",
         "stddiff": "",
     }
+    norm = dict()
+    stacked_norm = dict()
     wb2_obs_url = ""
     local_store_path = None     # directory where zarr file, model weights etc are stored
     no_cache_data = None        # don't cache or use zarr dataset downloaded from GCS on disk
@@ -164,9 +166,9 @@ class ReplayEmulator:
         self.delta_t = pd.Timedelta(self.delta_t)
         self.input_duration = pd.Timedelta(self.input_duration)
 
-        # have to set normalization statistics explicitly
-        self.norm = {}
-        self.stacked_norm = {}
+        # set normalization here so that we can jit compile with this class
+        self.set_normalization()
+        self.set_stacked_normalization()
 
 
     @property

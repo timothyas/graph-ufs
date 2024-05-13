@@ -99,7 +99,8 @@ def init_model(emulator, data: dict):
         predictor = construct_wrapped_graphcast(emulator)
         return predictor(inputs, targets_template=targets_template, forcings=forcings)
 
-    params, state = run_forward.init(
+    init_jitted = jit(run_forward.init)
+    params, state = init_jitted(
         rng=PRNGKey(emulator.init_rng_seed),
         emulator=emulator,
         inputs=data["inputs"].sel(optim_step=0),
@@ -153,7 +154,7 @@ def optimize(
     use_jax_distributed = emulator.use_jax_distributed
 
     @hk.transform_with_state
-    def loss_fn(inputs, targets, forcings):
+    def loss_fn(emulator, inputs, targets, forcings):
         predictor = construct_wrapped_graphcast(emulator)
         loss, diagnostics = predictor.loss(inputs, targets, forcings)
         return map_structure(
@@ -191,6 +192,7 @@ def optimize(
         params,
         state,
         opt_state,
+        emulator,
         input_batches,
         target_batches,
         forcing_batches,
@@ -200,7 +202,7 @@ def optimize(
 
         def _aux(params, state, i, t, f):
             (loss, diagnostics), next_state = loss_fn.apply(
-                params, state, PRNGKey(0), i, t, f
+                params, state, PRNGKey(0), emulator, i, t, f
             )
             return loss, (diagnostics, next_state)
 
@@ -408,6 +410,7 @@ def optimize(
             params=params,
             state=state,
             opt_state=opt_state,
+            emulator=emulator,
             input_batches=i_batches,
             target_batches=t_batches,
             forcing_batches=f_batches,

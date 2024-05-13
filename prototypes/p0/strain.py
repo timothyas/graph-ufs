@@ -34,8 +34,6 @@ if __name__ == "__main__":
 
     # parse arguments
     gufs, args = P0Emulator.from_parser()
-    gufs.set_normalization()
-    gufs.set_stacked_normalization()
 
     # for multi-gpu training
     init_devices(gufs)

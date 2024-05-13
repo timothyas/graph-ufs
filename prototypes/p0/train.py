@@ -42,9 +42,6 @@ if __name__ == "__main__":
     # for multi-gpu training
     init_devices(gufs)
 
-    # explicitly get normalization
-    gufs.set_normalization()
-
     # data generators
     generator = DataGenerator(
         emulator=gufs,
