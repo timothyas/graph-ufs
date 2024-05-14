@@ -70,6 +70,7 @@ if __name__ == "__main__":
             os.remove(loss_name)
 
     # training
+    opt_state = None
     if not args.test:
         logging.info("Starting Training")
 
@@ -88,13 +89,14 @@ if __name__ == "__main__":
                 data_valid = generator_valid.get_data()
 
                 # optimize
-                params, loss = optimize(
+                params, loss, opt_state = optimize(
                     params=params,
                     state=state,
                     optimizer=optimizer,
                     emulator=gufs,
                     training_data=data,
                     validation_data=data_valid,
+                    opt_state=opt_state,
                 )
 
                 # save weights
