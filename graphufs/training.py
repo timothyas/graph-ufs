@@ -353,6 +353,7 @@ def optimize(
     loss_avg = 0
     loss_valid_avg = 0
     mean_grad_avg = 0
+    lr = None
 
     if emulator.mpi_rank == 0:
         progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
@@ -417,8 +418,11 @@ def optimize(
             target_batches=t_batches,
             forcing_batches=f_batches,
         )
-        #lr = opt_state.hyperparams["learning_rate"]
-        #learning_rates.append(lr)
+        try:
+            lr = opt_state[1].hyperparams["learning_rate"]
+            learning_rates.append(lr)
+        except:
+            pass
 
         # call validation loss
         if (k % n_steps_valid_inc) == 0:
@@ -452,9 +456,11 @@ def optimize(
                 )[0]
             )
             mean_grad_avg += mean_grad
-            progress_bar.set_description(
-                f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
-            )
+            description = f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
+            if lr is not None:
+                description += f", LR = {lr:1.1e}"
+
+            progress_bar.set_description(description)
             progress_bar.update(num_gpus)
 
     if emulator.mpi_rank == 0:
@@ -463,9 +469,10 @@ def optimize(
         loss_avg /= N
         loss_valid_avg /= N
         mean_grad_avg /= N
-        progress_bar.set_description(
-            f"loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}"
-        )
+        description = f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
+        if lr is not None:
+            description += f", LR = {lr:1.1e}"
+        progress_bar.set_description(description)
         progress_bar.close()
 
     # save losses for each batch
@@ -502,11 +509,11 @@ def optimize(
             np.vstack(list(loss_by_var.values())),
             dims=("var_index", "optim_step"),
         )
-        #loss_ds["learning_rate"] = xr.DataArray(
-        #    learning_rates,
-        #    coords={"optim_step": loss_ds["optim_step"]},
-        #    dims=("optim_step",),
-        #)
+        loss_ds["learning_rate"] = xr.DataArray(
+            learning_rates,
+            coords={"optim_step": loss_ds["optim_step"]},
+            dims=("optim_step",),
+        )
 
         # concatenate losses and store
         if os.path.exists(loss_fname):

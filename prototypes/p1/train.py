@@ -10,27 +10,25 @@ from graphufs import (
 
 from p1 import P1Emulator
 
-#@optax.inject_hyperparams
 def graphufs_optimizer(
     n_linear,
-    n_cosine,
+    n_total,
     peak_value=1e-3,
     ):
-    """Define optimizer here to add inject_hyperparams decorator, so that we can diagnose the learning rate"""
 
     # define learning rate schedules
     lr_schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=peak_value,
         warmup_steps=n_linear,
-        decay_steps=n_cosine,
+        decay_steps=n_total,
         end_value=0.0,
     )
 
     # Adam optimizer
     optimizer = optax.chain(
         optax.clip_by_global_norm(32),
-        optax.adamw(
+        optax.inject_hyperparams(optax.adamw)(
             learning_rate=lr_schedule,
             b1=0.9,
             b2=0.95,
@@ -69,12 +67,12 @@ if __name__ == "__main__":
     if os.path.exists(loss_name):
         os.remove(loss_name)
 
-    n_linear = 4
-    n_steps_total = p1.num_epochs * p1.chunks_per_epoch * p1.steps_per_chunk
-    n_cosine = n_steps_total - n_linear
+    n_linear = 1_000
+    n_total = p1.num_epochs * p1.chunks_per_epoch * p1.steps_per_chunk
+    n_cosine = n_total - n_linear
     optimizer = graphufs_optimizer(
         n_linear=n_linear,
-        n_cosine=n_cosine,
+        n_total=n_total,
         peak_value=1e-3,
     )
 
