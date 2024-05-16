@@ -54,7 +54,7 @@ def construct_wrapped_graphcast(emulator, last_input_channel_mapping):
     # handle inputs/outputs float32 <-> BFloat16
     # ... and so that this happens after applying
     # normalization to inputs & targets
-    predictor = StackedBfloat16Cast(predictor)
+    #predictor = StackedBfloat16Cast(predictor)
     predictor = StackedInputsAndResiduals(
         predictor,
         diffs_stddev_by_level=emulator.stacked_norm["stddiff"],
@@ -203,7 +203,6 @@ def optimize(
     loss_by_channel = []
 
     n_steps = generator.epoch_size # for tensorflow... ugh
-    print("n_steps: ", n_steps)
 
     progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
     for k, (input_batches, target_batches) in enumerate(generator):
@@ -218,7 +217,6 @@ def optimize(
         )
 
         # update progress bar from rank 0
-        print(k, loss, diagnostics)
         optim_steps.append(k)
         loss_values.append(loss)
         loss_by_channel.append(diagnostics)
@@ -236,8 +234,6 @@ def optimize(
     progress_bar.close()
 
     # save losses for each batch
-    print("input: ", input_batches)
-    print(loss)
     loss_ds = xr.Dataset()
     loss_fname = os.path.join(emulator.local_store_path, "loss.nc")
     previous_optim_steps = 0
