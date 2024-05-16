@@ -94,6 +94,7 @@ class ReplayEmulator:
 
     # data chunking options
     chunks_per_epoch = None          # number of chunks per epoch
+    chunks_per_validation = None
     steps_per_chunk = None           # number of steps to train for in each chunk
     checkpoint_chunks = None         # save model after this many chunks are processed
 
@@ -378,13 +379,17 @@ class ReplayEmulator:
 
         all_xds = self.get_the_data(all_new_time=all_new_time, mode=mode)
         # split dataset into chunks
-        chunk_size = len(all_new_time) // self.chunks_per_epoch
+        n_chunks = self.chunks_per_epoch if mode == "training" else self.chunks_per_validation
+        if mode == "training":
+            chunk_size = len(all_new_time) // n_chunks
+        else:
+            chunk_size = len(all_new_time) // n_chunks
         all_new_time_chunks = []
 
         # overlap chunks by lead time + input duration
         overlap_step = (self.target_lead_time + self.input_duration) // delta_t if allow_overlapped_chunks else 0
-        for i in range(self.chunks_per_epoch):
-            if i == self.chunks_per_epoch - 1:
+        for i in range(n_chunks):
+            if i == n_chunks - 1:
                 all_new_time_chunks.append(all_new_time[i * chunk_size:len(all_new_time)])
             else:
                 all_new_time_chunks.append(all_new_time[i * chunk_size:(i + 1) * chunk_size + overlap_step])

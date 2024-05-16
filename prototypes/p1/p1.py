@@ -11,7 +11,7 @@ class P1Emulator(ReplayEmulator):
         "stddiff": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.statistics.1993-2019/diffs_stddev_by_level.zarr",
     }
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2022-6h-64x32_equiangular_conservative.zarr"
-    local_store_path = "./data"
+    local_store_path = "/lustre/p1-data-12chunks"
     no_cache_data = False        # don't cache or use zarr dataset downloaded from GCS on disk
 
     # these could be moved to a yaml file later
@@ -66,16 +66,24 @@ class P1Emulator(ReplayEmulator):
 
     # time related
     delta_t = "3h"              # the model time step
-    input_duration = "6h"    # time covered by initial condition(s), note the 1s is necessary for GraphCast code
+    input_duration = "6h"       # time covered by initial condition(s), note the 1s is necessary for GraphCast code
     target_lead_time = "3h"     # how long is the forecast ... at what point do we compare model to targets
     training_dates = (          # bounds of training data (inclusive)
         "1993-12-31T18",        # start
-        "1994-12-31T18"         # stop, includes all of 1994
+        "1994-12-31T21"         # stop
+    )
+    validation_dates = (        # bounds of validation data (inclusive)
+        "2022-01-01T00",        # start
+        "2022-02-01T00"         # stop
+    )
+    testing_dates = (           # bounds of testing data (inclusive)
+        "2020-01-01T00",        # start
+        "2020-02-01T00"         # stop
     )
 
     # training protocol
     batch_size = 32
-    num_epochs = 1
+    num_epochs = 2
 
     # model config options
     resolution = 1.0            # nominal spatial resolution
@@ -104,7 +112,8 @@ class P1Emulator(ReplayEmulator):
     training_batch_rng_seed = 100
 
     # data chunking options
-    chunks_per_epoch = 26      # 1 chunk per year
+    chunks_per_epoch = 48
+    chunks_per_validation = 3
     steps_per_chunk = None
     checkpoint_chunks = 1
 
