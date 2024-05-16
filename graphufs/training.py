@@ -457,9 +457,6 @@ def optimize(
             )
             mean_grad_avg += mean_grad
             description = f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
-            if lr is not None:
-                description += f", LR = {lr:1.1e}"
-
             progress_bar.set_description(description)
             progress_bar.update(num_gpus)
 
@@ -470,8 +467,6 @@ def optimize(
         loss_valid_avg /= N
         mean_grad_avg /= N
         description = f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
-        if lr is not None:
-            description += f", LR = {lr:1.1e}"
         progress_bar.set_description(description)
         progress_bar.close()
 
