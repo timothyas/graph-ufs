@@ -11,7 +11,7 @@ class P1Emulator(ReplayEmulator):
         "stddiff": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.statistics.1993-2019/diffs_stddev_by_level.zarr",
     }
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2022-6h-64x32_equiangular_conservative.zarr"
-    local_store_path = "./lustre/p1-data-12chunks"
+    local_store_path = "/lustre/p1-data"
     no_cache_data = False        # don't cache or use zarr dataset downloaded from GCS on disk
 
     # task config options
