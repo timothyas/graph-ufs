@@ -6,6 +6,7 @@ from graphufs import (
     optimize,
     DataGenerator,
     init_devices,
+    init_model,
 )
 
 from p1 import P1Emulator
@@ -64,8 +65,9 @@ if __name__ == "__main__":
     )
 
     # load weights or initialize a random model
-    logging.info(f"Loading weights: {0}")
-    params, state = p1.load_checkpoint(0)
+    logging.info(f"Initializing weights: {0}")
+    data = trainer.get_data()
+    params, state = init_model(p1, data)
     loss_name = f"{p1.local_store_path}/loss.nc"
     if os.path.exists(loss_name):
         os.remove(loss_name)
