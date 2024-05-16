@@ -43,3 +43,4 @@ if __name__ == "__main__":
 
     # TODO: make sure "state" is actually empty
     p1.save_checkpoint(params, id=0)
+    logging.info("Done with preprocessing")

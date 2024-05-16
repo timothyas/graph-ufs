@@ -9,6 +9,7 @@ from graphufs import (
 )
 
 from p1 import P1Emulator
+from ufs2arco import Timer
 
 def graphufs_optimizer(
     n_linear,
@@ -38,8 +39,10 @@ def graphufs_optimizer(
     return optimizer
 
 
-
 if __name__ == "__main__":
+
+    timer1 = Timer()
+    timer2 = Timer()
 
     # parse arguments
     p1, args = P1Emulator.from_parser()
@@ -67,7 +70,7 @@ if __name__ == "__main__":
     if os.path.exists(loss_name):
         os.remove(loss_name)
 
-    n_linear = 1_000
+    n_linear = 100
     n_total = p1.num_epochs * p1.chunks_per_epoch * p1.steps_per_chunk
     n_cosine = n_total - n_linear
     optimizer = graphufs_optimizer(
@@ -82,8 +85,10 @@ if __name__ == "__main__":
     logging.info(f"\t {n_cosine} cosine decay LR steps")
     opt_state = None
     for e in range(p1.num_epochs):
+        timer1.start()
         for c in range(p1.chunks_per_epoch):
-            logging.info(f"Training on epoch {e} and chunk {c}")
+            logging.info(f"Training on epoch {e+1} and chunk {c}")
+            timer2.start()
 
             # get chunk of data in parallel with NN optimization
             if p1.chunks_per_epoch > 1:
@@ -102,8 +107,10 @@ if __name__ == "__main__":
                 validation_data=data_valid,
                 opt_state=opt_state,
             )
+            timer2.stop(f"Done with chunk {c}")
 
-            # save weights
-            if c % p1.checkpoint_chunks == 0:
-                ckpt_id = (e * p1.chunks_per_epoch + c) // p1.checkpoint_chunks
-                p1.save_checkpoint(params, ckpt_id)
+        # save weights every epoch
+        p1.save_checkpoint(params, id=e+1)
+        timer1.stop(f"Done with epoch {e+1}")
+
+    logging.info("Done Training")
