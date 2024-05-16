@@ -64,16 +64,33 @@ class ReplayEmulator:
     validation_dates = tuple()  # bounds of validation data (inclusive)
 
     # training protocol
-    batch_size = None           # number of forecasts averaged over in loss per optim_step
-    num_epochs = None           # number of epochs
+    batch_size = None               # number of forecasts averaged over in loss per optim_step
+    num_epochs = None               # number of epochs
+    chunks_per_epoch = None         # number of chunks per epoch
+    chunks_per_validation = None
+    steps_per_chunk = None          # number of steps to train for in each chunk
+    checkpoint_chunks = None        # save model after this many chunks are processed
+
+    # others
+    num_gpus = None                 # number of GPUs to use for training
+    log_only_rank0 = None           # log only messages from rank 0
+    use_jax_distributed = None      # Use jax's distributed mechanism, no need for manula mpi4jax calls
+    use_xla_flags = None            # Use recommended flags for XLA and NCCL https://jax.readthedocs.io/en/latest/gpu_performance_tips.html
 
     # model config options
-    resolution = None
-    mesh_size = None
-    latent_size = None
-    gnn_msg_steps = None
-    hidden_layers = None
-    radius_query_fraction_edge_length = None
+    resolution = None               # nominal spatial resolution
+    mesh_size = None                # how many refinements to do on the multi-mesh
+    latent_size = None              # how many latent features to include in MLPs
+    gnn_msg_steps = None            # how many graph network message passing steps to do
+    hidden_layers = None            # number of hidden layers for each MLP
+    radius_query_fraction_edge_length = None    # Scalar that will be multiplied by the length of the longest edge of
+                                                # the finest mesh to define the radius of connectivity to use in the
+                                                # Grid2Mesh graph. Reasonable values are between 0.6 and 1. 0.6 reduces
+                                                # the number of grid points feeding into multiple mesh nodes and therefore
+                                                # reduces edge count and memory use, but gives better predictions.
+    mesh2grid_edge_normalization_factor = 0.6180338738074472 # Allows explicitly controlling edge normalization for mesh2grid edges.
+                                                             # If None, defaults to max edge length.This supports using pre-trained
+                                                             # model weights with a different graph structure to what it was trained on.
     mesh2grid_edge_normalization_factor = None
 
     # loss weighting, defaults to GraphCast implementation
@@ -93,16 +110,7 @@ class ReplayEmulator:
     training_batch_rng_seed = None # used to randomize the training batches
 
     # data chunking options
-    chunks_per_epoch = None          # number of chunks per epoch
-    chunks_per_validation = None
-    steps_per_chunk = None           # number of steps to train for in each chunk
-    checkpoint_chunks = None         # save model after this many chunks are processed
 
-    # others
-    num_gpus = None                  # number of GPUs to use for training
-    log_only_rank0 = None            # log only messages from rank 0
-    use_jax_distributed = None       # Use jax's distributed mechanism, no need for manula mpi4jax calls
-    use_xla_flags = None             # Use recommended flags for XLA and NCCL https://jax.readthedocs.io/en/latest/gpu_performance_tips.html
 
     # for stacked graphcast
     last_input_channel_mapping = None
