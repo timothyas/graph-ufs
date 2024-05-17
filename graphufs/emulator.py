@@ -1,5 +1,6 @@
 import os
 import logging
+import argparse
 import math
 import yaml
 import warnings
@@ -12,12 +13,17 @@ import xarray as xr
 from jax import tree_util
 
 from ufs2arco.regrid.ufsregridder import UFSRegridder
-from graphcast.graphcast import ModelConfig, TaskConfig
+from graphcast import checkpoint
+from graphcast.graphcast import ModelConfig, TaskConfig, CheckPoint
 from graphcast.data_utils import extract_inputs_targets_forcings
 from graphcast.model_utils import dataset_to_stacked
 from graphcast.losses import normalized_level_weights, normalized_latitude_weights
 
-from .utils import get_channel_index, get_last_input_mapping
+from .utils import (
+    get_channel_index, get_last_input_mapping,
+    add_emulator_arguments, set_emulator_options
+)
+
 
 class ReplayEmulator:
     """An emulator based on UFS Replay data. This manages all model configuration settings and normalization fields. Currently it is designed to be inherited for a specific use-case, and this could easily be generalized to read in settings via a configuration file (yaml, json, etc). Be sure to register any inherited class as a pytree for it to work with JAX.
@@ -32,6 +38,8 @@ class ReplayEmulator:
         "std": "",
         "stddiff": "",
     }
+    norm = dict()
+    stacked_norm = dict()
     wb2_obs_url = ""
     local_store_path = None     # directory where zarr file, model weights etc are stored
     no_cache_data = None        # don't cache or use zarr dataset downloaded from GCS on disk
@@ -56,16 +64,32 @@ class ReplayEmulator:
     validation_dates = tuple()  # bounds of validation data (inclusive)
 
     # training protocol
-    batch_size = None           # number of forecasts averaged over in loss per optim_step
-    num_epochs = None           # number of epochs
+    batch_size = None               # number of forecasts averaged over in loss per optim_step
+    num_epochs = None               # number of epochs
+    chunks_per_epoch = None         # number of chunks per epoch
+    steps_per_chunk = None          # number of steps to train for in each chunk
+    checkpoint_chunks = None        # save model after this many chunks are processed
+
+    # others
+    num_gpus = None                 # number of GPUs to use for training
+    log_only_rank0 = None           # log only messages from rank 0
+    use_jax_distributed = None      # Use jax's distributed mechanism, no need for manula mpi4jax calls
+    use_xla_flags = None            # Use recommended flags for XLA and NCCL https://jax.readthedocs.io/en/latest/gpu_performance_tips.html
 
     # model config options
-    resolution = None
-    mesh_size = None
-    latent_size = None
-    gnn_msg_steps = None
-    hidden_layers = None
-    radius_query_fraction_edge_length = None
+    resolution = None               # nominal spatial resolution
+    mesh_size = None                # how many refinements to do on the multi-mesh
+    latent_size = None              # how many latent features to include in MLPs
+    gnn_msg_steps = None            # how many graph network message passing steps to do
+    hidden_layers = None            # number of hidden layers for each MLP
+    radius_query_fraction_edge_length = None    # Scalar that will be multiplied by the length of the longest edge of
+                                                # the finest mesh to define the radius of connectivity to use in the
+                                                # Grid2Mesh graph. Reasonable values are between 0.6 and 1. 0.6 reduces
+                                                # the number of grid points feeding into multiple mesh nodes and therefore
+                                                # reduces edge count and memory use, but gives better predictions.
+    mesh2grid_edge_normalization_factor = 0.6180338738074472 # Allows explicitly controlling edge normalization for mesh2grid edges.
+                                                             # If None, defaults to max edge length.This supports using pre-trained
+                                                             # model weights with a different graph structure to what it was trained on.
     mesh2grid_edge_normalization_factor = None
 
     # loss weighting, defaults to GraphCast implementation
@@ -85,15 +109,7 @@ class ReplayEmulator:
     training_batch_rng_seed = None # used to randomize the training batches
 
     # data chunking options
-    chunks_per_epoch = None          # number of chunks per epoch
-    steps_per_chunk = None           # number of steps to train for in each chunk
-    checkpoint_chunks = None         # save model after this many chunks are processed
 
-    # others
-    num_gpus = None                  # number of GPUs to use for training
-    log_only_rank0 = None            # log only messages from rank 0
-    use_jax_distributed = None       # Use jax's distributed mechanism, no need for manula mpi4jax calls
-    use_xla_flags = None             # Use recommended flags for XLA and NCCL https://jax.readthedocs.io/en/latest/gpu_performance_tips.html
 
     # for stacked graphcast
     last_input_channel_mapping = None
@@ -158,13 +174,9 @@ class ReplayEmulator:
         self.delta_t = pd.Timedelta(self.delta_t)
         self.input_duration = pd.Timedelta(self.input_duration)
 
-        # get normalization statistics
-        self.norm = {}
-        self.stacked_norm = {}
-        self.norm["mean"], self.norm["std"], self.norm["stddiff"] = self.load_normalization()
-        for key in self.norm.keys():
-            input_norms, target_norms = self.normalization_to_stacked(self.norm[key], preserved_dims=tuple())
-            self.stacked_norm[key] = {"inputs": input_norms, "targets": target_norms}
+        # set normalization here so that we can jit compile with this class
+        self.set_normalization()
+        self.set_stacked_normalization()
 
 
     @property
@@ -191,6 +203,14 @@ class ReplayEmulator:
         kw = {k: v for k, v in dataclasses.asdict(self.task_config).items() if k not in ("latitude", "longitude")}
         kw["target_lead_times"] = self.target_lead_time
         return kw
+
+    @property
+    def local_data_path(self):
+        return os.path.join(self.local_store_path, "data.zarr")
+
+    @property
+    def checkpoint_dir(self):
+        return os.path.join(self.local_store_path, "models")
 
 
     def open_dataset(self, **kwargs):
@@ -293,6 +313,41 @@ class ReplayEmulator:
             bds = bds.drop(["cftime", "ftime"])
         return bds
 
+    def get_the_data(
+        self,
+        all_new_time=None,
+        mode="training",
+    ):
+        """Handle the local storage, caching, missing dates stuff here, pass to get_batches to batch it up"""
+
+        all_new_time = all_new_time if all_new_time is not None else self.get_time(mode=mode)
+        # download only missing dates and write them to disk
+        if self.no_cache_data or not os.path.exists(self.local_data_path):
+            logging.info(f"Downloading missing {mode} data for {len(all_new_time)} time stamps.")
+            xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
+            all_xds = self.subsample_dataset(xds, new_time=all_new_time)
+            if not self.no_cache_data:
+                all_xds.to_zarr(self.local_data_path)
+                all_xds.close()
+                all_xds = xr.open_zarr(self.local_data_path)
+        else:
+            # figure out missing dates
+            xds_on_disk = xr.open_zarr(self.local_data_path)
+            missing_dates = set(all_new_time.values) - set(xds_on_disk.time.values)
+            if len(missing_dates) > 0:
+                xds_on_disk.close()
+                logging.info(f"Downloading missing {mode} data for {len(missing_dates)} time stamps.")
+                # download and write missing dates to disk
+
+                missing_xds = self.open_dataset()
+                missing_xds = self.subsample_dataset(missing_xds, new_time=list(missing_dates))
+                missing_xds.to_zarr(self.local_data_path, append_dim="time")
+                # now that the data on disk is complete, reopen the dataset from disk
+                all_xds = xr.open_zarr(self.local_data_path)
+            else:
+                all_xds = xds_on_disk
+
+        return all_xds
 
     def get_batches(
         self,
@@ -315,7 +370,6 @@ class ReplayEmulator:
             inputs, targets, forcings (xarray.Dataset): with new dimension "batch"
                 and appropriate fields for each dataset, based on the variables in :attr:`task_config`
         """
-        local_data_path = os.path.join(self.local_store_path, "data.zarr")
         all_new_time = self.get_time(mode=mode)
 
         # split the dataset across nodes
@@ -329,40 +383,17 @@ class ReplayEmulator:
             all_new_time = all_new_time[start:end]
             logging.info(f"Data for {mode} MPI rank {self.mpi_rank}: {all_new_time[0]} to {all_new_time[-1]} : {len(all_new_time)} time stamps.")
 
-        # download only missing dates and write them to disk
-        if self.no_cache_data or not os.path.exists(local_data_path):
-            logging.info(f"Downloading missing {mode} data for {len(all_new_time)} time stamps.")
-            xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"})
-            all_xds = self.subsample_dataset(xds, new_time=all_new_time)
-            if not self.no_cache_data:
-                all_xds.to_zarr(local_data_path)
-                all_xds.close()
-                all_xds = xr.open_zarr(local_data_path)
-        else:
-            # figure out missing dates
-            xds_on_disk = xr.open_zarr(local_data_path)
-            missing_dates = set(all_new_time.values) - set(xds_on_disk.time.values)
-            if len(missing_dates) > 0:
-                xds_on_disk.close()
-                logging.info(f"Downloading missing {mode} data for {len(missing_dates)} time stamps.")
-                # download and write missing dates to disk
-           
-                missing_xds = self.open_dataset() # PS I added this helper in the last PR
-                missing_xds = self.subsample_dataset(missing_xds, new_time=list(missing_dates))
-                missing_xds.to_zarr(local_data_path, append_dim="time")
-                # now that the data on disk is complete, reopen the dataset from disk
-                all_xds = xr.open_zarr(local_data_path)
-            else:
-                all_xds = xds_on_disk
 
+        all_xds = self.get_the_data(all_new_time=all_new_time, mode=mode)
         # split dataset into chunks
-        chunk_size = len(all_new_time) // self.chunks_per_epoch
+        n_chunks = self.chunks_per_epoch
+        chunk_size = len(all_new_time) // n_chunks
         all_new_time_chunks = []
 
         # overlap chunks by lead time + input duration
         overlap_step = (self.target_lead_time + self.input_duration) // delta_t if allow_overlapped_chunks else 0
-        for i in range(self.chunks_per_epoch):
-            if i == self.chunks_per_epoch - 1:
+        for i in range(n_chunks):
+            if i == n_chunks - 1:
                 all_new_time_chunks.append(all_new_time[i * chunk_size:len(all_new_time)])
             else:
                 all_new_time_chunks.append(all_new_time[i * chunk_size:(i + 1) * chunk_size + overlap_step])
@@ -400,6 +431,9 @@ class ReplayEmulator:
                 if n_optim_steps > n_max_optim_steps:
                     n_optim_steps = n_max_optim_steps
                     warnings.warn(f"There's less data than the number of batches requested, reducing n_optim_steps to {n_optim_steps}")
+
+                if self.steps_per_chunk is None:
+                    self.steps_per_chunk = n_optim_steps
 
                 # create a new time vector with desired delta_t
                 # this has to end such that we can pull an entire forecast from the training data
@@ -447,7 +481,11 @@ class ReplayEmulator:
                         # Do this only for training, because in testing mode this process will mess up the output.
                         # For testing, we will cleanup after prediction using dropna()
                         def copy_values(ds_list):
-                            mds = ds_list[-self.batch_size].copy()
+                            s = len(ds_list)
+                            if s >= self.batch_size:
+                                mds = ds_list[-self.batch_size].copy()
+                            else:
+                                mds = ds_list[random.randint(0,s-1)].copy()
                             mds["optim_step"] = [k]
                             ds_list.append(mds)
                         if mode != "testing":
@@ -490,11 +528,8 @@ class ReplayEmulator:
                 yield inputs, targets, forcings, inittimes
 
 
-    def load_normalization(self, **kwargs):
+    def set_normalization(self, **kwargs):
         """Load the normalization fields into memory
-
-        Note:
-            This uses values for the ``year_progress`` and ``day_progress`` fields in each dataset (mean, std, diffs_std) that were copied from the graphcast demo in order to get moving. These should be recomputed and the lines in this method that set these copied values should be removed.
 
         Returns:
             mean_by_level, stddev_by_level, diffs_stddev_by_level (xarray.Dataset): with normalization fields
@@ -503,15 +538,18 @@ class ReplayEmulator:
         def open_normalization(component, **kwargs):
 
             # try to read locally first
-            if self.local_store_path is not None:
-                local_path = os.path.join(self.local_store_path, os.path.basename(self.norm_urls[component]))
+            local_path = os.path.join(
+                self.local_store_path,
+                "normalization",
+                os.path.basename(self.norm_urls[component]),
+            )
 
-                foundit = False
-                if os.path.isdir(local_path):
-                    xds = xr.open_zarr(local_path)
-                    xds = xds.load()
-                    foundit = True
-            if not foundit:
+            if os.path.isdir(local_path):
+                xds = xr.open_zarr(local_path)
+                xds = xds.load()
+                foundit = True
+
+            else:
                 xds = xr.open_zarr(self.norm_urls[component], **kwargs)
                 myvars = list(x for x in self.all_variables if x in xds)
                 xds = xds[myvars]
@@ -521,10 +559,49 @@ class ReplayEmulator:
                 xds.to_zarr(local_path)
             return xds
 
-        mean_by_level = open_normalization("mean")
-        stddev_by_level = open_normalization("std")
-        diffs_stddev_by_level = open_normalization("stddiff")
-        return mean_by_level, stddev_by_level, diffs_stddev_by_level
+        for key in ["mean", "std", "stddiff"]:
+            self.norm[key] = open_normalization(key)
+
+    def set_stacked_normalization(self):
+
+        assert len(self.norm["mean"]) > 0, "normalization not set, call Emulator.set_normalization()"
+
+        def open_normalization(component):
+
+            # try to read locally first
+            inputs_path = os.path.join(
+                self.local_store_path,
+                "stacked-normalization",
+                "inputs",
+                os.path.basename(self.norm_urls[component]),
+            )
+            targets_path = os.path.join(
+                self.local_store_path,
+                "stacked-normalization",
+                "targets",
+                os.path.basename(self.norm_urls[component]),
+            )
+
+            if os.path.isdir(inputs_path) and os.path.isdir(targets_path):
+                inputs = xr.open_zarr(inputs_path)
+                inputs = inputs["inputs"].load()
+                targets = xr.open_zarr(targets_path)
+                targets = targets["targets"].load()
+
+            else:
+                inputs, targets = self.normalization_to_stacked(self.norm[component], preserved_dims=tuple())
+                ds = xr.Dataset()
+                inputs = inputs.load()
+                targets = targets.load()
+                inputs.to_dataset(name="inputs").to_zarr(inputs_path)
+                targets.to_dataset(name="targets").to_zarr(targets_path)
+            return inputs.data, targets.data
+
+        for key in self.norm.keys():
+            self.stacked_norm[key] = dict()
+            input_norms, target_norms = open_normalization(key)
+            self.stacked_norm[key] = {"inputs": input_norms, "targets": target_norms}
+
 
     def normalization_to_stacked(self, xds, **kwargs):
         """
@@ -553,7 +630,7 @@ class ReplayEmulator:
             ],
             dim="channels",
         )
-        return input_norms.data, target_norms.data
+        return input_norms, target_norms
 
 
     def calc_loss_weights(self, gds):
@@ -632,6 +709,88 @@ class ReplayEmulator:
         chunksize = {k:v for k,v in chunksize.items() if k in newds.dims}
         newds = newds.chunk(chunksize)
         return newds
+
+    @classmethod
+    def from_parser(cls):
+        """Parse CLI arguments."""
+
+        # parse arguments
+        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+        parser.add_argument(
+            "--test",
+            dest="test",
+            action="store_true",
+            required=False,
+            help="Test model specified with --id. Otherwise train model.",
+        )
+        parser.add_argument(
+            "--id",
+            "-i",
+            dest="id",
+            required=False,
+            type=int,
+            default=-1,
+            help="ID of neural networks to resume training/testing from.",
+        )
+
+        # add arguments from emulator
+        add_emulator_arguments(cls, parser)
+
+        # parse CLI args
+        args = parser.parse_args()
+
+        # override options in emulator class by those from CLI
+        set_emulator_options(cls, args)
+        emulator = cls()
+
+        return emulator, args
+
+    def save_checkpoint(self, params, id) -> None:
+        """Store checkpoint.
+
+        Args:
+            params: the parameters (weights) of the model
+            ckpt_path (str): path to model
+            id (int): the stored iteration ID
+        """
+
+        ckpt_path = os.path.join(self.checkpoint_dir, f"model_{id}.npz")
+        if not os.path.isdir(self.checkpoint_dir):
+            os.makedirs(self.checkpoint_dir)
+
+        with open(ckpt_path, "wb") as f:
+            ckpt = CheckPoint(
+                params=params,
+                model_config=self.model_config,
+                task_config=self.task_config,
+                description=f"GraphCast model trained on UFS Replay data, ID = {id}",
+                license="Public domain",
+            )
+            checkpoint.dump(f, ckpt)
+
+    def checkpoint_exists(self, id):
+        ckpt_path = os.path.join(self.checkpoint_dir, f"model_{id}.npz")
+        return os.path.exists(ckpt_path)
+
+    def load_checkpoint(self, id, verbose: bool = False):
+        """Load checkpoint.
+
+        Args:
+            id (int): integer ID num to load
+            verbose (bool, optional): print metadata about the model
+        """
+        ckpt_path = os.path.join(self.checkpoint_dir, f"model_{id}.npz")
+
+        with open(ckpt_path, "rb") as f:
+            ckpt = checkpoint.load(f, CheckPoint)
+        params = ckpt.params
+        state = {}
+        model_config = ckpt.model_config
+        task_config = ckpt.task_config
+        if verbose:
+            logging.info("Model description:\n", ckpt.description, "\n")
+            logging.info("Model license:\n", ckpt.license, "\n")
+        return params, state
 
 
     def _tree_flatten(self):

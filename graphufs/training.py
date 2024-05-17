@@ -131,6 +131,7 @@ def optimize(
     emulator,
     training_data,
     validation_data,
+    opt_state=None,
 ):
     """Optimize the model parameters by running through all optim_steps in data
 
@@ -148,7 +149,7 @@ def optimize(
             this doesn't have gradient info, but we could add that
     """
 
-    opt_state = optimizer.init(params)
+    opt_state = optimizer.init(params) if opt_state is None else opt_state
     num_gpus = emulator.num_gpus
     mpi_size = emulator.mpi_size
     use_jax_distributed = emulator.use_jax_distributed
@@ -265,6 +266,7 @@ def optimize(
 
         # warm up step
         n_steps = 2 * num_gpus
+        n_steps_valid = len(validation_data["inputs"]["optim_step"])
 
         sl = slice(0, num_gpus)
         i_batches = training_data["inputs"].isel(optim_step=sl).copy(deep=True)
@@ -287,22 +289,6 @@ def optimize(
             for var_name, var in f1_batches.data_vars.items():
                 f_batches[var_name] = f_batches[var_name].copy(deep=False, data=var.values)
 
-            i1_batches_valid = validation_data["inputs"].isel(optim_step=sl)
-            t1_batches_valid = validation_data["targets"].isel(optim_step=sl)
-            f1_batches_valid = validation_data["forcings"].isel(optim_step=sl)
-            for var_name, var in i1_batches_valid.data_vars.items():
-                i_batches_valid[var_name] = i_batches_valid[var_name].copy(
-                    deep=False, data=var.values
-                )
-            for var_name, var in t1_batches_valid.data_vars.items():
-                t_batches_valid[var_name] = t_batches_valid[var_name].copy(
-                    deep=False, data=var.values
-                )
-            for var_name, var in f1_batches_valid.data_vars.items():
-                f_batches_valid[var_name] = f_batches_valid[var_name].copy(
-                    deep=False, data=var.values
-                )
-
             x, *_ = optimize.optim_step_jitted(
                 params=x,
                 state=state,
@@ -312,23 +298,42 @@ def optimize(
                 target_batches=t_batches,
                 forcing_batches=f_batches,
             )
-            y = optimize.vloss_jitted(
-                params=x,
-                state=state,
-                input_batches=i_batches_valid,
-                target_batches=t_batches_valid,
-                forcing_batches=f_batches_valid,
-            )
 
-            # wait until value for x/y is ready i.e. until jitting completes
+            if k == 0 or n_steps_valid >= n_steps:
+                i1_batches_valid = validation_data["inputs"].isel(optim_step=sl)
+                t1_batches_valid = validation_data["targets"].isel(optim_step=sl)
+                f1_batches_valid = validation_data["forcings"].isel(optim_step=sl)
+                for var_name, var in i1_batches_valid.data_vars.items():
+                    i_batches_valid[var_name] = i_batches_valid[var_name].copy(
+                        deep=False, data=var.values
+                    )
+                for var_name, var in t1_batches_valid.data_vars.items():
+                    t_batches_valid[var_name] = t_batches_valid[var_name].copy(
+                        deep=False, data=var.values
+                    )
+                for var_name, var in f1_batches_valid.data_vars.items():
+                    f_batches_valid[var_name] = f_batches_valid[var_name].copy(
+                        deep=False, data=var.values
+                    )
+
+                y = optimize.vloss_jitted(
+                    params=x,
+                    state=state,
+                    input_batches=i_batches_valid,
+                    target_batches=t_batches_valid,
+                    forcing_batches=f_batches_valid,
+                )
+
+                block_until_ready(y)
+
             block_until_ready(x)
-            block_until_ready(y)
 
         logging.info("Finished jitting optim_step")
 
     optim_steps = []
     loss_values = []
     loss_valid_values = []
+    learning_rates = []
     loss_by_var = {k: list() for k in training_data["targets"].data_vars}
 
     n_steps = len(training_data["inputs"]["optim_step"])
@@ -336,7 +341,7 @@ def optimize(
     assert (
         n_steps_valid <= n_steps
     ), f"Number of validation steps ({n_steps_valid}) must be less than or equal to the number of training steps ({n_steps})"
-    n_steps_valid_inc = (n_steps // n_steps_valid) * num_gpus
+    n_steps_valid_inc = ceil(n_steps / n_steps_valid) * num_gpus
 
     # make a deep copy of slice 0
     sl = slice(0, num_gpus)
@@ -351,6 +356,7 @@ def optimize(
     loss_avg = 0
     loss_valid_avg = 0
     mean_grad_avg = 0
+    lr = np.nan
 
     if emulator.mpi_rank == 0:
         progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
@@ -415,6 +421,11 @@ def optimize(
             target_batches=t_batches,
             forcing_batches=f_batches,
         )
+        try:
+            lr = opt_state[1].hyperparams["learning_rate"]
+        except:
+            pass
+        learning_rates.append(lr)
 
         # call validation loss
         if (k % n_steps_valid_inc) == 0:
@@ -448,9 +459,8 @@ def optimize(
                 )[0]
             )
             mean_grad_avg += mean_grad
-            progress_bar.set_description(
-                f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
-            )
+            description = f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
+            progress_bar.set_description(description)
             progress_bar.update(num_gpus)
 
     if emulator.mpi_rank == 0:
@@ -459,9 +469,8 @@ def optimize(
         loss_avg /= N
         loss_valid_avg /= N
         mean_grad_avg /= N
-        progress_bar.set_description(
-            f"loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}"
-        )
+        description = f"loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}"
+        progress_bar.set_description(description)
         progress_bar.close()
 
     # save losses for each batch
@@ -498,6 +507,11 @@ def optimize(
             np.vstack(list(loss_by_var.values())),
             dims=("var_index", "optim_step"),
         )
+        loss_ds["learning_rate"] = xr.DataArray(
+            learning_rates,
+            coords={"optim_step": loss_ds["optim_step"]},
+            dims=("optim_step",),
+        )
 
         # concatenate losses and store
         if os.path.exists(loss_fname):
@@ -506,7 +520,7 @@ def optimize(
             stored_loss_ds = loss_ds
         stored_loss_ds.to_netcdf(loss_fname)
 
-    return params, loss_ds
+    return params, loss_ds, opt_state
 
 
 def predict(

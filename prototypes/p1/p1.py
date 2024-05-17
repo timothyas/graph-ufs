@@ -11,26 +11,25 @@ class P1Emulator(ReplayEmulator):
         "stddiff": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.statistics.1993-2019/diffs_stddev_by_level.zarr",
     }
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2022-6h-64x32_equiangular_conservative.zarr"
-    local_store_path = "./data"
+    local_store_path = "/lustre/p1-data"
     no_cache_data = False        # don't cache or use zarr dataset downloaded from GCS on disk
 
-    # these could be moved to a yaml file later
     # task config options
     input_variables = (
-        "delz", # height thickness (as a replacement for geopotential)
-        "hgtsfc", # geopotential at surface
-        "land", # land-sea mask
-        "tmp2m", # 2m temperature
-        "pressfc", # mean sea level pressure
-        "ugrd10m", # 10m u component of wind
-        "vgrd10m", # 10m v component of wind
-        "prateb_ave",  # total precipitation 3hr
-        "dswrf_avetoa", # toa incident solar radiation
-        "tmp", # temperature
-        "ugrd", # u component of wind
-        "vgrd", # v component of wind
-        "dzdt", # vertical velocity
-        "spfh", # specific humidity
+        "delz",
+        "hgtsfc",
+        "land",
+        "tmp2m",
+        "pressfc",
+        "ugrd10m",
+        "vgrd10m",
+        "prateb_ave",
+        "dswrf_avetoa",
+        "tmp",
+        "ugrd",
+        "vgrd",
+        "dzdt",
+        "spfh",
         "year_progress_sin",
         "year_progress_cos",
         "day_progress_sin",
@@ -50,68 +49,63 @@ class P1Emulator(ReplayEmulator):
         "spfh",
     )
     forcing_variables = (
-        "dswrf_avetoa", # toa incident solar radiation
-        "land", # land-sea-ice mask
-        "hgtsfc", # geopotential at the surface
+        "dswrf_avetoa",
+        "land",
+        "hgtsfc",
         "year_progress_sin",
         "year_progress_cos",
         "day_progress_sin",
         "day_progress_cos",
     )
-    
+
     all_variables = tuple() # this is created in __init__
 
     pressure_levels = (
-        50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000)
+        50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000,
+    )
 
     # time related
-    delta_t = "3h"              # the model time step
-    input_duration = "6h"    # time covered by initial condition(s), note the 1s is necessary for GraphCast code
-    target_lead_time = "3h"     # how long is the forecast ... at what point do we compare model to targets
-    training_dates = (          # bounds of training data (inclusive)
-        "1993-12-31T18",        # start
-        "1994-12-31T18"         # stop, includes all of 1994
+    delta_t = "3h"
+    input_duration = "6h"
+    target_lead_time = "3h"
+    training_dates = (
+        "1993-12-31T18",
+        "2019-12-31T21"
+    )
+    validation_dates = (
+        "2022-01-01T00",
+        "2022-02-01T00"
+    )
+    testing_dates = (
+        "2020-01-01T00",
+        "2020-02-01T00"
     )
 
     # training protocol
     batch_size = 32
+    num_epochs = 2
+    chunks_per_epoch = 48
+    steps_per_chunk = None
+    checkpoint_chunks = 1
+
+    # multi GPU and xla options
+    num_gpus = 1
+    log_only_rank0 = False
+    use_jax_distributed = False
+    use_xla_flags = False
 
     # model config options
-    resolution = 1.0            # nominal spatial resolution
-    
-    mesh_size = 5               # how many refinements to do on the multi-mesh
-    
-    latent_size = 512           # how many latent features to include in various MLPs
-    
-    gnn_msg_steps = 16          # how many graph network message passing steps to do
-    
-    hidden_layers = 1           # number of hidden layers for each MLP
-
-    radius_query_fraction_edge_length = 0.6  # Scalar that will be multiplied by the length of the longest edge of 
-                                             # the finest mesh to define the radius of connectivity to use in the 
-                                             # Grid2Mesh graph. Reasonable values are between 0.6 and 1. 0.6 reduces 
-                                             # the number of grid points feeding into multiple mesh nodes and therefore 
-                                             # reduces edge count and memory use, but gives better predictions.
-    
-    mesh2grid_edge_normalization_factor = 0.6180338738074472 # Allows explicitly controlling edge normalization for mesh2grid edges. 
-                                                             # If None, defaults to max edge length.This supports using pre-trained 
-                                                             # model weights with a different graph structure to what it was trained on. 
+    resolution = 1.0
+    mesh_size = 5
+    latent_size = 512
+    gnn_msg_steps = 16
+    hidden_layers = 1
+    radius_query_fraction_edge_length = 0.6
 
     # this is used for initializing the state in the gradient computation
     grad_rng_seed = 0
     init_rng_seed = 0
     training_batch_rng_seed = 100
-    
-    # data chunking options
-    chunks_per_epoch = 26      # 1 chunk per year
-    steps_per_chunk = None
-    checkpoint_chunks = 1
-
-    # others
-    num_gpus = 1
-    log_only_rank0 = False
-    use_jax_distributed = False
-    use_xla_flags = False
 
 tree_util.register_pytree_node(
     P1Emulator,

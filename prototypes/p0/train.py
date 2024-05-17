@@ -10,12 +10,8 @@ from graphufs import (
     predict,
     DataGenerator,
     init_model,
-    load_checkpoint,
-    save_checkpoint,
     convert_wb2_format,
     compute_rmse_bias,
-    add_emulator_arguments,
-    set_emulator_options,
     init_devices,
 )
 
@@ -38,47 +34,10 @@ Usage:
 """
 
 
-def parse_args():
-    """Parse CLI arguments."""
-
-    # parse arguments
-    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument(
-        "--test",
-        dest="test",
-        action="store_true",
-        required=False,
-        help="Test model specified with --id. Otherwise train model.",
-    )
-    parser.add_argument(
-        "--id",
-        "-i",
-        dest="id",
-        required=False,
-        type=int,
-        default=-1,
-        help="ID of neural networks to resume training/testing from.",
-    )
-
-    # add arguments from emulator
-    add_emulator_arguments(P0Emulator, parser)
-
-    # parse CLI args
-    args = parser.parse_args()
-
-    # override options in emulator class by those from CLI
-    set_emulator_options(P0Emulator, args)
-
-    return args
-
-
 if __name__ == "__main__":
 
     # parse arguments
-    args = parse_args()
-
-    # initialize emulator
-    gufs = P0Emulator()
+    gufs, args = P0Emulator.from_parser()
 
     # for multi-gpu training
     init_devices(gufs)
@@ -99,13 +58,9 @@ if __name__ == "__main__":
         )
 
     # load weights or initialize a random model
-    checkpoint_dir = f"{gufs.local_store_path}/models"
-    ckpt_id = args.id
-    ckpt_path = f"{checkpoint_dir}/model_{ckpt_id}.npz"
-
-    if os.path.exists(ckpt_path) and args.id >= 0:
-        logging.info(f"Loading weights: {ckpt_path}")
-        params, state = load_checkpoint(ckpt_path)
+    if gufs.checkpoint_exists(args.id) and args.id >= 0:
+        logging.info(f"Loading weights: {args.id}")
+        params, state = gufs.load_checkpoint(args.id)
     else:
         logging.info("Initializing Optimizer and Parameters")
         data = generator.get_data()  # just to figure out shapes
@@ -115,12 +70,9 @@ if __name__ == "__main__":
             os.remove(loss_name)
 
     # training
+    opt_state = None
     if not args.test:
         logging.info("Starting Training")
-
-        # create checkpoint directory
-        if not os.path.exists(checkpoint_dir):
-            os.mkdir(checkpoint_dir)
 
         optimizer = optax.adam(learning_rate=1e-4)
 
@@ -137,20 +89,20 @@ if __name__ == "__main__":
                 data_valid = generator_valid.get_data()
 
                 # optimize
-                params, loss = optimize(
+                params, loss, opt_state = optimize(
                     params=params,
                     state=state,
                     optimizer=optimizer,
                     emulator=gufs,
                     training_data=data,
                     validation_data=data_valid,
+                    opt_state=opt_state,
                 )
 
                 # save weights
                 if c % gufs.checkpoint_chunks == 0:
                     ckpt_id = (e * gufs.chunks_per_epoch + c) // gufs.checkpoint_chunks
-                    ckpt_path = f"{checkpoint_dir}/model_{ckpt_id}.npz"
-                    save_checkpoint(gufs, params, ckpt_path)
+                    gufs.save_checkpoint(params, ckpt_id)
 
     # testing
     else:

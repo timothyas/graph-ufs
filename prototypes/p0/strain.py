@@ -15,19 +15,14 @@ from graphufs.torch import Dataset, DataLoader
 
 from graphufs.utils import get_last_input_mapping
 from graphufs import (
-    load_checkpoint,
-    save_checkpoint,
     convert_wb2_format,
     compute_rmse_bias,
-    add_emulator_arguments,
-    set_emulator_options,
     init_devices,
 )
 from torch.utils.data import DataLoader as TorchDataLoader
 import jax
 
 from simple_emulator import P0Emulator
-from train import parse_args
 
 if __name__ == "__main__":
 
@@ -38,10 +33,7 @@ if __name__ == "__main__":
     )
 
     # parse arguments
-    args = parse_args()
-
-    # initialize emulator
-    gufs = P0Emulator()
+    gufs, args = P0Emulator.from_parser()
 
     # for multi-gpu training
     init_devices(gufs)
@@ -73,13 +65,9 @@ if __name__ == "__main__":
     last_input_channel_mapping = get_last_input_mapping(training_data)
 
     # load weights or initialize a random model
-    checkpoint_dir = f"{gufs.local_store_path}/models"
-    ckpt_id = args.id
-    ckpt_path = f"{checkpoint_dir}/model_{ckpt_id}.npz"
-
-    if os.path.exists(ckpt_path) and args.id >= 0:
-        logging.info(f"Loading weights: {ckpt_path}")
-        params, state = load_checkpoint(ckpt_path)
+    if gufs.checkpoint_exists(args.id) and args.id >= 0:
+        logging.info(f"Loading weights: {args.id}")
+        params, state = gufs.load_checkpoint(args.id)
     else:
         logging.info("Initializing Optimizer and Parameters")
         params, state = init_model(gufs, training_data, last_input_channel_mapping)
@@ -90,10 +78,6 @@ if __name__ == "__main__":
     # training
     if not args.test:
         logging.info("Starting Training")
-
-        # create checkpoint directory
-        if not os.path.exists(checkpoint_dir):
-            os.mkdir(checkpoint_dir)
 
         optimizer = optax.adam(learning_rate=1e-4)
 
@@ -115,8 +99,7 @@ if __name__ == "__main__":
 
             # save weights
             ckpt_id = e
-            ckpt_path = f"{checkpoint_dir}/model_{ckpt_id}.npz"
-            save_checkpoint(gufs, params, ckpt_path)
+            gufs.save_checkpoint(params, ckpt_id)
 
     # testing
     else:

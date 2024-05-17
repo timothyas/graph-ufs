@@ -1,7 +1,7 @@
 import itertools
+import argparse
 import logging
 import threading
-from graphcast import checkpoint, graphcast
 import xarray as xr
 
 def get_chunk_data(generator, data: dict):
@@ -60,8 +60,8 @@ def get_chunk_in_parallel(
     )
     input_thread.start()
     # for first chunk, wait until input thread finishes
-    if first_chunk:
-        input_thread.join()
+    #if first_chunk:
+    input_thread.join()
     return input_thread
 
 
@@ -92,43 +92,6 @@ class DataGenerator:
         else:
             return self.data_0;
 
-
-def load_checkpoint(ckpt_path: str, verbose: bool = False):
-    """Load checkpoint.
-
-    Args:
-        ckpt_path (str): path to model
-        verbose (bool, optional): print metadata about the model
-    """
-    with open(ckpt_path, "rb") as f:
-        ckpt = checkpoint.load(f, graphcast.CheckPoint)
-    params = ckpt.params
-    state = {}
-    model_config = ckpt.model_config
-    task_config = ckpt.task_config
-    if verbose:
-        logging.info("Model description:\n", ckpt.description, "\n")
-        logging.info("Model license:\n", ckpt.license, "\n")
-    return params, state
-
-
-def save_checkpoint(gufs, params, ckpt_path: str) -> None:
-    """Load checkpoint.
-
-    Args:
-        gufs: emulator class
-        params: the parameters (weights) of the model
-        ckpt_path (str): path to model
-    """
-    with open(ckpt_path, "wb") as f:
-        ckpt = graphcast.CheckPoint(
-            params=params,
-            model_config=gufs.model_config,
-            task_config=gufs.task_config,
-            description="GraphCast model trained on UFS data",
-            license="Public domain",
-        )
-        checkpoint.dump(f, ckpt)
 
 def product_dict(**kwargs):
     keys = kwargs.keys()
@@ -271,7 +234,7 @@ def add_emulator_arguments(emulator, parser) -> None:
                 parser.add_argument(
                     name,
                     dest=k,
-                    action="store_true",
+                    type=str2bool,
                     required=False,
                     help=f"{k}: default {v}",
                 )
@@ -305,3 +268,13 @@ def set_emulator_options(emulator, args) -> None:
                     value = attr_type(value)
                 setattr(emulator, arg_name, value)
 
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
