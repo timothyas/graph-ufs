@@ -466,7 +466,7 @@ def optimize(
         loss_avg /= N
         loss_valid_avg /= N
         mean_grad_avg /= N
-        description = f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
+        description = f"loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}"
         progress_bar.set_description(description)
         progress_bar.close()
 
