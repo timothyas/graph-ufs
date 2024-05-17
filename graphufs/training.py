@@ -353,7 +353,7 @@ def optimize(
     loss_avg = 0
     loss_valid_avg = 0
     mean_grad_avg = 0
-    lr = None
+    lr = np.nan
 
     if emulator.mpi_rank == 0:
         progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
@@ -420,9 +420,9 @@ def optimize(
         )
         try:
             lr = opt_state[1].hyperparams["learning_rate"]
-            learning_rates.append(lr)
         except:
             pass
+        learning_rates.append(lr)
 
         # call validation loss
         if (k % n_steps_valid_inc) == 0:
