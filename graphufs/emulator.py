@@ -388,10 +388,7 @@ class ReplayEmulator:
         all_xds = self.get_the_data(all_new_time=all_new_time, mode=mode)
         # split dataset into chunks
         n_chunks = self.chunks_per_epoch if mode == "training" else self.chunks_per_validation
-        if mode == "training":
-            chunk_size = len(all_new_time) // n_chunks
-        else:
-            chunk_size = len(all_new_time) // n_chunks
+        chunk_size = len(all_new_time) // n_chunks
         all_new_time_chunks = []
 
         # overlap chunks by lead time + input duration
