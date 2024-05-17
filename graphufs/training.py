@@ -341,7 +341,7 @@ def optimize(
     assert (
         n_steps_valid <= n_steps
     ), f"Number of validation steps ({n_steps_valid}) must be less than or equal to the number of training steps ({n_steps})"
-    n_steps_valid_inc = (n_steps // n_steps_valid) * num_gpus
+    n_steps_valid_inc = ceil(n_steps / n_steps_valid) * num_gpus
 
     # make a deep copy of slice 0
     sl = slice(0, num_gpus)
