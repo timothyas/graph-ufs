@@ -100,12 +100,23 @@ def init_model(emulator, data: dict):
         return predictor(inputs, targets_template=targets_template, forcings=forcings)
 
     init_jitted = jit(run_forward.init)
+
+    inputs=data["inputs"].sel(optim_step=0)
+    targets=data["targets"].sel(optim_step=0)
+    forcings=data["forcings"].sel(optim_step=0)
+    # if we are not loading chunks, load slice as it
+    # seems init_jitted requires it
+    if emulator.no_load_chunk:
+        inputs = inputs.load()
+        targets = targets.load()
+        forcings = forcings.load()
+
     params, state = init_jitted(
         rng=PRNGKey(emulator.init_rng_seed),
         emulator=emulator,
-        inputs=data["inputs"].sel(optim_step=0),
-        targets_template=data["targets"].sel(optim_step=0),
-        forcings=data["forcings"].sel(optim_step=0),
+        inputs=inputs,
+        targets_template=targets,
+        forcings=forcings,
     )
     return params, state
 
@@ -256,6 +267,14 @@ def optimize(
         params = optax.apply_updates(params, updates)
         return params, loss, diagnostics, opt_state, grads
 
+    # compute number of steps
+    batch_size = len(training_data["inputs"]["batch"])
+    n_steps = len(training_data["inputs"]["optim_step"])
+    n_steps_valid = len(validation_data["inputs"]["optim_step"])
+    if n_steps_valid > n_steps:
+        raise ValueError(f"Number of validation steps ({n_steps_valid}) must be less than or equal to the number of training steps ({n_steps})")
+    n_steps_valid_inc = ceil(n_steps / n_steps_valid) * num_gpus
+
     # jit optim_step only once
     if not hasattr(optimize, "optim_step_jitted"):
         logging.info("Started jitting optim_step")
@@ -265,8 +284,7 @@ def optimize(
         optimize.vloss_jitted = jit(vloss)
 
         # warm up step
-        n_steps = 2 * num_gpus
-        n_steps_valid = len(validation_data["inputs"]["optim_step"])
+        n_steps_jit = min(2, n_steps) * num_gpus
 
         sl = slice(0, num_gpus)
         i_batches = training_data["inputs"].isel(optim_step=sl).copy(deep=True)
@@ -277,7 +295,7 @@ def optimize(
         f_batches_valid = validation_data["forcings"].isel(optim_step=sl).copy(deep=True)
 
         x = params
-        for k in range(0, n_steps, num_gpus):
+        for k in range(0, n_steps_jit, num_gpus):
             sl = slice(k, k + num_gpus)
             i1_batches = training_data["inputs"].isel(optim_step=sl)
             t1_batches = training_data["targets"].isel(optim_step=sl)
@@ -299,7 +317,7 @@ def optimize(
                 forcing_batches=f_batches,
             )
 
-            if k == 0 or n_steps_valid >= n_steps:
+            if k == 0 or n_steps_valid >= n_steps_jit:
                 i1_batches_valid = validation_data["inputs"].isel(optim_step=sl)
                 t1_batches_valid = validation_data["targets"].isel(optim_step=sl)
                 f1_batches_valid = validation_data["forcings"].isel(optim_step=sl)
@@ -336,13 +354,6 @@ def optimize(
     learning_rates = []
     loss_by_var = {k: list() for k in training_data["targets"].data_vars}
 
-    n_steps = len(training_data["inputs"]["optim_step"])
-    n_steps_valid = len(validation_data["inputs"]["optim_step"])
-    assert (
-        n_steps_valid <= n_steps
-    ), f"Number of validation steps ({n_steps_valid}) must be less than or equal to the number of training steps ({n_steps})"
-    n_steps_valid_inc = ceil(n_steps / n_steps_valid) * num_gpus
-
     # make a deep copy of slice 0
     sl = slice(0, num_gpus)
     i_batches = training_data["inputs"].isel(optim_step=sl).copy(deep=True)
@@ -359,7 +370,7 @@ def optimize(
     lr = np.nan
 
     if emulator.mpi_rank == 0:
-        progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
+        progress_bar = tqdm(total=n_steps, ncols=160, desc="Processing")
 
     for k in range(0, n_steps, num_gpus):
         # When the number of batches is not evenly divisible by num_gpus
@@ -421,10 +432,15 @@ def optimize(
             target_batches=t_batches,
             forcing_batches=f_batches,
         )
+
+        # get learning rate
         try:
             lr = opt_state[1].hyperparams["learning_rate"]
         except:
-            pass
+            try:
+                lr = opt_state[2].hyperparams["learning_rate"]
+            except:
+                pass
         learning_rates.append(lr)
 
         # call validation loss
@@ -459,17 +475,18 @@ def optimize(
                 )[0]
             )
             mean_grad_avg += mean_grad
-            description = f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}"
+            description = f"loss = {loss:.5f}, val_loss = {loss_valid:.5f}, mean(|grad|) = {mean_grad:.8f}, lr = {lr:.5e}"
             progress_bar.set_description(description)
             progress_bar.update(num_gpus)
 
+    # update progress bar one last time with average loss/grad values per chunk
     if emulator.mpi_rank == 0:
-        # update progress bar one last time with average loss/grad values per chunk
         N = len(loss_values)
         loss_avg /= N
         loss_valid_avg /= N
         mean_grad_avg /= N
-        description = f"loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}"
+        lr = learning_rates[-1]
+        description = f"loss = {loss_avg:.5f}, val_loss = {loss_valid_avg:.5f}, mean(|grad|) = {mean_grad_avg:.8f}, lr = {lr:0.5e}"
         progress_bar.set_description(description)
         progress_bar.close()
 
@@ -484,7 +501,7 @@ def optimize(
             previous_optim_steps = len(stored_loss_ds.optim_step)
 
         loss_ds["optim_step"] = [x + previous_optim_steps for x in optim_steps]
-        loss_ds.attrs["batch_size"] = len(training_data["inputs"]["batch"])
+        loss_ds.attrs["batch_size"] = batch_size
         loss_ds["var_index"] = xr.DataArray(
             np.arange(len(loss_by_var)),
             coords={"var_index": np.arange(len(loss_by_var))},
@@ -548,7 +565,7 @@ def predict(
     all_predictions = []
 
     n_steps = input_batches["optim_step"].size
-    progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
+    progress_bar = tqdm(total=n_steps, ncols=160, desc="Processing")
 
     for k in range(0, n_steps):
 

@@ -69,6 +69,9 @@ class ReplayEmulator:
     chunks_per_epoch = None         # number of chunks per epoch
     steps_per_chunk = None          # number of steps to train for in each chunk
     checkpoint_chunks = None        # save model after this many chunks are processed
+    max_queue_size = None           # number of chunks in queue of data generators
+    num_workers = None              # number of worker threads for data generators
+    no_load_chunk = None            # don't load chunk into RAM, has the lowest memory usage if true
 
     # others
     num_gpus = None                 # number of GPUs to use for training
@@ -399,9 +402,10 @@ class ReplayEmulator:
                 all_new_time_chunks.append(all_new_time[i * chunk_size:(i + 1) * chunk_size + overlap_step])
 
         # print chunk boundaries
-        logging.info(f"Chunks for {mode}: {len(all_new_time_chunks)}")
+        message = f"Chunks for {mode}: {len(all_new_time_chunks)}"
         for chunk_id, new_time in enumerate(all_new_time_chunks):
-            logging.info(f"Chunk {chunk_id}: {new_time[0]} to {new_time[-1]} : {len(new_time)} time stamps")
+            message += f"\nChunk {chunk_id+1}: {new_time[0]} to {new_time[-1]} : {len(new_time)} time stamps"
+        logging.info(message)
 
         # loop forever
         while True:
@@ -421,6 +425,9 @@ class ReplayEmulator:
                 data_duration = end - start
 
                 n_max_forecasts = (data_duration - self.input_duration) // self.delta_t
+                if n_max_forecasts <= 0:
+                    raise ValueError(f"n_max_forecasts for {mode} is {n_max_forecasts}")
+
                 n_max_optim_steps = math.ceil(n_max_forecasts / self.batch_size)
                 n_optim_steps = n_max_optim_steps if n_optim_steps is None else n_optim_steps
                 n_forecasts = n_optim_steps * self.batch_size
@@ -432,7 +439,7 @@ class ReplayEmulator:
                     n_optim_steps = n_max_optim_steps
                     warnings.warn(f"There's less data than the number of batches requested, reducing n_optim_steps to {n_optim_steps}")
 
-                if self.steps_per_chunk is None:
+                if self.steps_per_chunk is None and mode != "validation":
                     self.steps_per_chunk = n_optim_steps
 
                 # create a new time vector with desired delta_t
@@ -465,9 +472,6 @@ class ReplayEmulator:
                 # subsample in time, grab variables and vertical levels we want
                 xds = self.subsample_dataset(all_xds, new_time=new_time)
 
-                # load into RAM
-                xds = xds.load();
-
                 inputs = []
                 targets = []
                 forcings = []
@@ -485,7 +489,9 @@ class ReplayEmulator:
                             if s >= self.batch_size:
                                 mds = ds_list[-self.batch_size].copy()
                             else:
-                                mds = ds_list[random.randint(0,s-1)].copy()
+                                bs = random.randint(0,s-1)
+                                mds = ds_list[bs].copy()
+                                mds["batch"] = [b]
                             mds["optim_step"] = [k]
                             ds_list.append(mds)
                         if mode != "testing":
