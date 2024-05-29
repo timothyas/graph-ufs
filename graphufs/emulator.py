@@ -72,6 +72,7 @@ class ReplayEmulator:
     max_queue_size = None           # number of chunks in queue of data generators
     num_workers = None              # number of worker threads for data generators
     no_load_chunk = None            # don't load chunk into RAM, has the lowest memory usage if true
+    store_loss = None               # store loss in a netcdf file
 
     # others
     num_gpus = None                 # number of GPUs to use for training
@@ -271,49 +272,23 @@ class ReplayEmulator:
         return xds
 
 
-    def preprocess(self, xds, batch_index=None, drop_cftime=True):
+    def preprocess(self, xds, batch_index=None):
         """Prepare a single batch for GraphCast
 
         Args:
             xds (xarray.Dataset): with replay data
             batch_index (int, optional): the index of this batch
-            drop_cftime (bool, optional): if True, drop the ``cftime`` and ``ftime`` coordinates that exist in the Replay dataset to avoid future JAX problems (might be helpful to keep them for some debugging cases)
-
         Returns:
             bds (xarray.Dataset): this batch of data
         """
-
-        # make sure we've subsampled/subset
-        bds = self.subsample_dataset(xds)
-
-        bds = bds.rename({
-            "pfull": "level",
-            "grid_xt": "lon",
-            "grid_yt": "lat",
-            "time": "datetime",
-        })
-
-        # unclear if this is necessary for computation
-        bds = bds.sortby("lat", ascending=True)
-
+        bds = xds
         bds["time"] = (bds.datetime - bds.datetime[0])
         bds = bds.swap_dims({"datetime": "time"}).reset_coords()
         if batch_index is not None:
             bds = bds.expand_dims({
                 "batch": [batch_index],
             })
-
-        # note that this has to be after batch_index is set for variables
-        # added in graphcast.data_utils.add_derived_vars to have the right dimensionality
         bds = bds.set_coords(["datetime"])
-
-        # cftime is a data_var not a coordinate, but if it's made to be a coordinate
-        # it causes crazy JAX problems when making predictions with graphufs.training.run_forward.apply
-        # because it thinks something is wrong when the input/output cftime object values are different
-        # (even though... of course they will be for prediction)
-        # safest to drop here to avoid confusion, along with ftime since it is also not used
-        if drop_cftime:
-            bds = bds.drop(["cftime", "ftime"])
         return bds
 
     def get_the_data(
@@ -407,6 +382,10 @@ class ReplayEmulator:
             message += f"\nChunk {chunk_id+1}: {new_time[0]} to {new_time[-1]} : {len(new_time)} time stamps"
         logging.info(message)
 
+        # warnings before we get started
+        if pd.Timedelta(self.target_lead_time) > self.delta_t:
+            warnings.warn("ReplayEmulator.get_training_batches: need to rework this to pull targets for all steps at delta_t intervals between initial conditions and target_lead times, at least in part because we need the forcings at each delta_t time step, and the data extraction code only pulls this at each specified target_lead_time")
+
         # loop forever
         while True:
 
@@ -463,15 +442,18 @@ class ReplayEmulator:
                 else:
                     forecast_initial_times = all_initial_times[:n_forecasts]
 
-                # warnings before we get started
-                if pd.Timedelta(self.target_lead_time) > self.delta_t:
-                    warnings.warn("ReplayEmulator.get_training_batches: need to rework this to pull targets for all steps at delta_t intervals between initial conditions and target_lead times, at least in part because we need the forcings at each delta_t time step, and the data extraction code only pulls this at each specified target_lead_time")
-
-                # load the dataset in to avoid lots of calls... need to figure out how to do this best
-
                 # subsample in time, grab variables and vertical levels we want
                 xds = self.subsample_dataset(all_xds, new_time=new_time)
+                xds = xds.rename({
+                    "pfull": "level",
+                    "grid_xt": "lon",
+                    "grid_yt": "lat",
+                    "time": "datetime",
+                    })
+                xds = xds.drop(["cftime", "ftime"])
+                xds.load()
 
+                # iterate through batches
                 inputs = []
                 targets = []
                 forcings = []
@@ -498,7 +480,6 @@ class ReplayEmulator:
                             copy_values(inputs)
                             copy_values(targets)
                             copy_values(forcings)
-                            copy_values(inittimes)
                         continue
 
                     timestamps_in_this_forecast = pd.date_range(
@@ -508,7 +489,7 @@ class ReplayEmulator:
                         inclusive="both",
                     )
                     batch = self.preprocess(
-                        xds.sel(time=timestamps_in_this_forecast),
+                        xds.sel(datetime=timestamps_in_this_forecast),
                         batch_index=b,
                     )
 
@@ -517,20 +498,25 @@ class ReplayEmulator:
                         **self.extract_kwargs,
                     )
 
-                    # fix this later for batch_size != 1
-                    this_inittimes = batch.datetime.isel(time=0)
-                    this_inittimes = this_inittimes.to_dataset(name="inittimes")
-
                     # note that the optim_step dim has to be added after the extract_inputs_targets_forcings call
                     inputs.append(this_input.expand_dims({"optim_step": [k]}))
                     targets.append(this_target.expand_dims({"optim_step": [k]}))
                     forcings.append(this_forcing.expand_dims({"optim_step": [k]}))
-                    inittimes.append(this_inittimes.expand_dims({"optim_step": [k]}))
 
-                inputs = self.combine_chunk(inputs)
-                targets = self.combine_chunk(targets)
-                forcings = self.combine_chunk(forcings)
-                inittimes = self.combine_chunk(inittimes)
+                    if mode == "testing":
+                        # fix this later for batch_size != 1
+                        this_inittimes = batch.datetime.isel(time=0)
+                        this_inittimes = this_inittimes.to_dataset(name="inittimes")
+                        inittimes.append(this_inittimes.expand_dims({"optim_step": [k]}))
+
+                del xds
+                inputs = xr.combine_by_coords(inputs)
+                targets = xr.combine_by_coords(targets)
+                forcings = xr.combine_by_coords(forcings)
+                if mode == "testing":
+                    inittimes = xr.combine_by_coords(inittimes)
+                else:
+                    inittimes = None
                 yield inputs, targets, forcings, inittimes
 
 
@@ -700,21 +686,6 @@ class ReplayEmulator:
         lats = lats[::-1]
         return lats, lons
 
-
-    def combine_chunk(self, ds_list):
-        """Used by the training batch creation code to combine many datasets for optimization"""
-        newds = xr.combine_by_coords(ds_list)
-        chunksize = {
-            "optim_step": 1,
-            "batch": -1,
-            "time": -1,
-            "level": -1,
-            "lat": -1,
-            "lon": -1,
-        }
-        chunksize = {k:v for k,v in chunksize.items() if k in newds.dims}
-        newds = newds.chunk(chunksize)
-        return newds
 
     @classmethod
     def from_parser(cls):

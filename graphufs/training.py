@@ -156,8 +156,6 @@ def optimize(
 
     Returns:
         params (dict): optimized model parameters
-        loss_ds (xarray.Dataset): with the total loss function and loss per variable for each optim_step
-            this doesn't have gradient info, but we could add that
     """
 
     opt_state = optimizer.init(params) if opt_state is None else opt_state
@@ -294,6 +292,13 @@ def optimize(
         t_batches_valid = validation_data["targets"].isel(optim_step=sl).copy(deep=True)
         f_batches_valid = validation_data["forcings"].isel(optim_step=sl).copy(deep=True)
 
+        optimize.i_batches = i_batches
+        optimize.t_batches = t_batches
+        optimize.f_batches = f_batches
+        optimize.i_batches_valid = i_batches_valid
+        optimize.t_batches_valid = t_batches_valid
+        optimize.f_batches_valid = f_batches_valid
+
         x = params
         for k in range(0, n_steps_jit, num_gpus):
             sl = slice(k, k + num_gpus)
@@ -348,21 +353,21 @@ def optimize(
 
         logging.info("Finished jitting optim_step")
 
+    logging.info("Starting iterations")
+
     optim_steps = []
     loss_values = []
     loss_valid_values = []
     learning_rates = []
     loss_by_var = {k: list() for k in training_data["targets"].data_vars}
 
-    # make a deep copy of slice 0
-    sl = slice(0, num_gpus)
-    i_batches = training_data["inputs"].isel(optim_step=sl).copy(deep=True)
-    t_batches = training_data["targets"].isel(optim_step=sl).copy(deep=True)
-    f_batches = training_data["forcings"].isel(optim_step=sl).copy(deep=True)
-
-    i_batches_valid = validation_data["inputs"].isel(optim_step=sl).copy(deep=True)
-    t_batches_valid = validation_data["targets"].isel(optim_step=sl).copy(deep=True)
-    f_batches_valid = validation_data["forcings"].isel(optim_step=sl).copy(deep=True)
+    # use the pre-allocated space
+    i_batches = optimize.i_batches
+    t_batches = optimize.t_batches
+    f_batches = optimize.f_batches
+    i_batches_valid = optimize.i_batches_valid
+    t_batches_valid = optimize.t_batches_valid
+    f_batches_valid = optimize.f_batches_valid
 
     loss_avg = 0
     loss_valid_avg = 0
@@ -491,15 +496,14 @@ def optimize(
         progress_bar.close()
 
     # save losses for each batch
-    loss_ds = xr.Dataset()
-
-    if emulator.mpi_rank == 0:
+    if emulator.mpi_rank == 0 and emulator.store_loss:
         loss_fname = os.path.join(emulator.local_store_path, "loss.nc")
         previous_optim_steps = 0
         if os.path.exists(loss_fname):
             stored_loss_ds = xr.open_dataset(loss_fname)
             previous_optim_steps = len(stored_loss_ds.optim_step)
 
+        loss_ds = xr.Dataset()
         loss_ds["optim_step"] = [x + previous_optim_steps for x in optim_steps]
         loss_ds.attrs["batch_size"] = batch_size
         loss_ds["var_index"] = xr.DataArray(
@@ -536,8 +540,9 @@ def optimize(
         else:
             stored_loss_ds = loss_ds
         stored_loss_ds.to_netcdf(loss_fname)
+        logging.info("Updated loss file.")
 
-    return params, loss_ds, opt_state
+    return params, opt_state
 
 
 def predict(

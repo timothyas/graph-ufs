@@ -7,22 +7,22 @@ import xarray as xr
 import concurrent.futures
 
 
-generator_lock = threading.Lock()
-
-def get_chunk_data(generator, data: dict, no_load_chunk: bool):
+def get_chunk_data(generator, gen_lock, data: dict, no_load_chunk: bool):
     """Get multiple training batches.
 
     Args:
         generator: chunk generator object
+        gen_lock: generator lock - because generators are not thread-safe
         data (dict): A dict containing the [inputs, targets, forcings]
         no_load_chunk: don't load chunk into RAM
     """
 
     # get batches from replay on GCS
     try:
-        with generator_lock:
+        with gen_lock:
             inputs, targets, forcings, inittimes = next(generator)
-    except StopIteration:
+    except Exception as e:
+        logging.info(e)
         return
 
     # load into ram unless specified otherwise
@@ -30,7 +30,8 @@ def get_chunk_data(generator, data: dict, no_load_chunk: bool):
         inputs.load()
         targets.load()
         forcings.load()
-        inittimes.load()
+        if inittimes is not None:
+            inittimes.load()
 
     # update dictionary
     data.update(
@@ -59,6 +60,7 @@ class DataGenerator:
         self.max_queue_size = max_queue_size
         self.data_queue = queue.Queue(maxsize=max_queue_size)
         self.stop_event = threading.Event()
+        self.gen_lock = threading.Lock()
 
         # initialize batch generator
         self.no_load_chunk = emulator.no_load_chunk
@@ -79,10 +81,8 @@ class DataGenerator:
     def generate(self):
         """ Data generator function called by workers """
         while not self.stop_event.is_set():
-            # get a chunk of data
             chunk_data = {}
-            get_chunk_data(self.gen, chunk_data, self.no_load_chunk)
-            # put data to queue
+            get_chunk_data(self.gen, self.gen_lock, chunk_data, self.no_load_chunk)
             self.data_queue.put(chunk_data)
 
     def get_data(self):
@@ -91,7 +91,7 @@ class DataGenerator:
             return self.data_queue.get()
         else:
             chunk_data = {}
-            get_chunk_data(self.gen, chunk_data, self.no_load_chunk)
+            get_chunk_data(self.gen, self.gen_lock, chunk_data, self.no_load_chunk)
             return chunk_data
 
     def stop(self):
@@ -308,7 +308,8 @@ def get_approximate_memory_usage(data, max_queue_size, num_workers, no_load_chun
         for d in data:
             chunk_ram = 0
             for k, v in d.items():
-               chunk_ram += v.nbytes
+                if v is not None:
+                    chunk_ram += v.nbytes
             chunk_ram /= 1024 * 1024 * 1024
             total += (max_queue_size + num_workers) * chunk_ram
     return total
