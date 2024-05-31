@@ -8,6 +8,7 @@ import warnings
 from functools import partial
 import numpy as np
 import xarray as xr
+import jax
 from jax import (
     jit,
     value_and_grad,
@@ -22,6 +23,9 @@ from jax import (
 )
 from graphcast.xarray_jax import pmap
 from jax.lax import pmean
+from jax.sharding import NamedSharding, Mesh, PartitionSpec as P
+from jax.sharding import PositionalSharding
+from jax.experimental import mesh_utils
 from jax.random import PRNGKey
 import jax.numpy as jnp
 import optax
@@ -66,7 +70,7 @@ def construct_wrapped_graphcast(emulator, last_input_channel_mapping):
     return predictor
 
 
-def init_model(emulator, gds, last_input_channel_mapping):
+def init_model(emulator, inputs, last_input_channel_mapping):
     """Initialize model with random weights.
     """
 
@@ -75,7 +79,6 @@ def init_model(emulator, gds, last_input_channel_mapping):
         predictor = construct_wrapped_graphcast(emulator, last_input_channel_mapping)
         return predictor(inputs)
 
-    inputs, _ = gds[0]
     params, state = run_forward.init(
         rng=PRNGKey(emulator.init_rng_seed),
         inputs=inputs,
@@ -84,7 +87,7 @@ def init_model(emulator, gds, last_input_channel_mapping):
 
 
 def optimize(
-    params, state, optimizer, emulator, trainer, validator, weights, last_input_channel_mapping,
+    params, state, optimizer, emulator, trainer, validator, weights, last_input_channel_mapping, opt_state=None
 ):
     """Optimize the model parameters by running through all optim_steps in data
 
@@ -102,13 +105,16 @@ def optimize(
             this doesn't have gradient info, but we could add that
     """
 
-    opt_state = optimizer.init(params)
-    num_gpus = emulator.num_gpus
+    opt_state = optimizer.init(params) if opt_state is None else opt_state
     mpi_size = emulator.mpi_size
     use_jax_distributed = emulator.use_jax_distributed
+
+    devices = jax.devices()
+    sharding = PositionalSharding(devices)
+    sharding = sharding.reshape((emulator.num_gpus, 1, 1, 1))
+    all_gpus = sharding.replicate()
+
     if use_jax_distributed:
-        raise NotImplementedError
-    if num_gpus > 1:
         raise NotImplementedError
 
     @hk.transform_with_state
@@ -160,14 +166,23 @@ def optimize(
         params = optax.apply_updates(params, updates)
         return params, loss, diagnostics, opt_state, grads
 
+    params = jax.device_put(params, all_gpus)
+    state = jax.device_put(state, all_gpus)
+    opt_state = jax.device_put(opt_state, all_gpus)
+    weights = jax.device_put(weights, all_gpus)
+    last_input_channel_mapping = jax.device_put(last_input_channel_mapping, all_gpus)
+
 
     # jit optim_step only once
     if not hasattr(optimize, "optim_step_jitted"):
         logging.info("Started jitting optim_step")
 
         # jitted function
+        first_input, first_target = trainer.get_data()
+        first_input = jax.device_put(first_input, sharding)
+        first_target = jax.device_put(first_target, sharding)
+
         optimize.optim_step_jitted = jit(optim_step)
-        first_input, first_target = next(iter(trainer))
         x, *_ = optimize.optim_step_jitted(
             params=params,
             state=state,
@@ -175,30 +190,26 @@ def optimize(
             input_batch=first_input,
             target_batch=first_target,
         )
+        # refill the queue because we pulled this first item
+        trainer.restart()
         block_until_ready(x)
+
 
         # Unclear if it's safe to assume whether we'll have the drop_last attr or not
         if not trainer.drop_last:
-            # this is necessary to let the JIT compiler see the last batch,
-            # which may be a different size
-            # I'm not sure if this pulls everything into memory though ...
-            *_, (last_input, last_target) = iter(trainer)
-            y, *_ = optimize.optim_step_jitted(
-                params=params,
-                state=state,
-                opt_state=opt_state,
-                input_batch=last_input,
-                target_batch=last_target,
-            )
-            block_until_ready(y)
+            raise NotImplementedError
         logging.info("Finished jitting optim_step")
 
 
     if not hasattr(optimize, "vloss_jitted"):
         logging.info("Started jitting validation loss")
 
+        first_input, first_target = validator.get_data()
+
+        first_input = jax.device_put(first_input, sharding)
+        first_target = jax.device_put(first_target, sharding)
+
         optimize.vloss_jitted = jit(loss_fn.apply)
-        first_input, first_target = next(iter(validator))
         (x, _), _ = optimize.vloss_jitted(
             params=params,
             state=state,
@@ -206,45 +217,58 @@ def optimize(
             targets=first_target,
             rng=PRNGKey(0),
         )
+        # refill validation queue since the first one was popped
+        validator.restart()
         block_until_ready(x)
         logging.info("Finished jitting validation loss")
 
 
+    # training
     optim_steps = []
     loss_values = []
-
+    learning_rates = []
+    lr = np.nan
     loss_by_channel = []
     n_steps = len(trainer)
 
+    params = jax.device_put(params, all_gpus)
+    state = jax.device_put(state, all_gpus)
+    opt_state = jax.device_put(opt_state, all_gpus)
+    weights = jax.device_put(weights, all_gpus)
+    last_input_channel_mapping = jax.device_put(last_input_channel_mapping, all_gpus)
 
     progress_bar = tqdm(total=n_steps, ncols=140, desc="Processing")
-    for k, (input_batches, target_batches) in enumerate(trainer):
+    for k, (input_batch, target_batch) in enumerate(trainer):
+
+        input_batch = jax.device_put(input_batch, sharding)
+        target_batch = jax.device_put(target_batch, sharding)
 
         # call optimize
         params, loss, diagnostics, _, grads = optimize.optim_step_jitted(
             params=params,
             state=state,
             opt_state=opt_state,
-            input_batch=input_batches,
-            target_batch=target_batches,
+            input_batch=input_batch,
+            target_batch=target_batch,
         )
 
         # update progress bar from rank 0
         optim_steps.append(k)
         loss_values.append(loss)
         loss_by_channel.append(diagnostics)
+        try:
+            lr = opt_state[1].hyperparams["learning_rate"]
+        except:
+            pass
+        learning_rates.append(lr)
 
-        mean_grad = np.mean(
-            tree_util.tree_flatten(
-                tree_util.tree_map(lambda x: np.abs(x).mean(), grads)
-            )[0]
-        )
         progress_bar.set_description(
-            f"[{emulator.mpi_rank}] loss = {loss:.5f}, mean(|grad|) = {mean_grad:.8f}"
+            f"loss = {loss:.5f}, qsize = {trainer.data_queue.qsize()}",
         )
-        progress_bar.update(num_gpus)
+        progress_bar.update()
 
     progress_bar.close()
+    trainer.restart()
 
     # validation
     loss_valid_values = []
@@ -253,25 +277,29 @@ def optimize(
         n_steps_valid <= n_steps
     ), f"Number of validation steps ({n_steps_valid}) must be less than or equal to the number of training steps ({n_steps})"
     progress_bar = tqdm(total=n_steps_valid, ncols=140, desc="Processing")
-    for input_batches, target_batches in validator:
+    for input_batch, target_batch in validator:
+
+        input_batch = jax.device_put(input_batch, sharding)
+        target_batch = jax.device_put(target_batch, sharding)
+
         (loss_valid, _), _ = optimize.vloss_jitted(
             params=params,
             state=state,
-            inputs=input_batches,
-            targets=target_batches,
+            inputs=input_batch,
+            targets=target_batch,
             rng=PRNGKey(0),
         )
         loss_valid_values.append(loss_valid)
         progress_bar.set_description(
-            f"validation loss = {loss_valid:.5f}"
+            f"validation loss = {loss_valid:.5f}, qsize = {validator.data_queue.qsize()}"
         )
-        progress_bar.update(num_gpus)
+        progress_bar.update()
     loss_valid_avg = np.mean(loss_valid)
     progress_bar.set_description(
         f"validation loss = {loss_valid_avg:.5f}"
     )
     progress_bar.close()
-
+    validator.restart()
 
     # save losses for each batch
     loss_ds = xr.Dataset()
@@ -320,6 +348,10 @@ def optimize(
             "description": "averaged over validation data once per epoch",
         },
     )
+    loss_ds["learning_rate"] = xr.DataArray(
+        learning_rates,
+        dims=("optim_step",),
+    )
     # this is just so we know what optim steps correspond to what epoch
     loss_ds["epoch_label"] = (1+previous_epochs)*xr.ones_like(loss_ds.optim_step)
 
@@ -330,4 +362,4 @@ def optimize(
         stored_loss_ds = loss_ds
     stored_loss_ds.to_netcdf(loss_fname)
 
-    return params, loss_ds
+    return params, loss_ds, opt_state
