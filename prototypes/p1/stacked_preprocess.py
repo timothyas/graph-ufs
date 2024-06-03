@@ -3,6 +3,7 @@ import os
 import sys
 import subprocess
 import numpy as np
+import dask
 
 from graphufs.datasets import Dataset
 from p1 import P1Emulator
@@ -19,6 +20,7 @@ class SimpleFormatter(logging.Formatter):
 
 def setup(mode):
 
+    dask.config.set(scheduler="threads", num_workers=16)
     logging.basicConfig(
         stream=sys.stdout,
         level=logging.INFO,
