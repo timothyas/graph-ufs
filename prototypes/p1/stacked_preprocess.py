@@ -1,3 +1,4 @@
+import time
 import logging
 import os
 import sys
@@ -6,7 +7,7 @@ import numpy as np
 import dask
 
 from graphufs.datasets import Dataset
-from p1 import P1Emulator
+from p1stacked import P1Emulator
 
 from ufs2arco import Timer
 
@@ -20,7 +21,7 @@ class SimpleFormatter(logging.Formatter):
 
 def setup(mode):
 
-    dask.config.set(scheduler="threads", num_workers=16)
+
     logging.basicConfig(
         stream=sys.stdout,
         level=logging.INFO,
@@ -42,6 +43,8 @@ def setup(mode):
             "channels": 13,
         },
     )
+
+    dask.config.set(scheduler="threads", num_workers=p1.dask_threads)
     return p1, tds
 
 
@@ -60,7 +63,7 @@ def submit_slurm_job(job_id, n_jobs, mode):
         f"#SBATCH --ntasks=1\n"+\
         f"#SBATCH --cpus-per-task={_n_cpus}\n"+\
         f"#SBATCH --partition={_partition}\n"+\
-        f"#SBATCH -t 120:00:00\n\n"+\
+        f"#SBATCH -t 03:00:00\n\n"+\
         f"source /contrib2/Tim.Smith/miniconda3/etc/profile.d/conda.sh\n"+\
         f"conda activate graphufs-cpu\n"+\
         f'python -c "{the_code}"'
@@ -87,20 +90,48 @@ def store_batch_of_samples(jid, n_jobs, mode):
     logging.info(f"Job = {jid} / {n_jobs}")
     logging.info(f"Processing indices: {start} - {end}")
 
-
-    datachunk_indices = np.linspace(0, len(tds.xds.datetime), n_jobs+1)
-    cst = int(datachunk_indices[jid]-1)
-    cst = max(cst, 0)
-    ced = int(datachunk_indices[jid+1]+1)
-    logging.info(f"Loading data time indices {cst} - {ced}")
-    tds.xds.isel(datetime=slice(cst, ced)).load()
-    logging.info("Starting my batch...")
     for idx in range(start, end):
         tds.store_sample(idx)
         if idx % 10 == 0:
             logging.info(f"Done with sample {idx}")
 
     logging.info("Done with my batch")
+
+def fill_some_indices():
+    """
+    Problem indices:
+
+        Runtime error related to blosc compression
+            14575, 14576,
+            60134 - 60140 (inclusive),
+            61389, 61390,
+            63337, 63338,
+
+        Just ... hangs with no end in sight
+            14577, 14578
+    """
+
+
+    p1, tds = setup("training")
+
+    indices = np.concatenate([
+#        np.arange(13391, 13635),
+#        np.arange(14365, 14609),
+        np.arange(14579, 14609),
+        np.arange(51619, 51862),
+        np.arange(59897, 60141),
+        np.arange(61358, 61602),
+        np.arange(63306, 63550),
+        np.arange(68906, 69150),
+    ])
+    for idx in indices:
+        idx_int = int(idx)
+        logging.info(f"Storing sample {idx_int}")
+        try:
+            tds.store_sample(idx_int)
+            logging.info(f" ... Done with sample {idx_int}")
+        except RuntimeError:
+            logging.error(f" *** Runtime error with sample {idx_int} *** ")
 
 
 def make_container(mode):
@@ -129,10 +160,12 @@ if __name__ == "__main__":
         make_container(mode)
 
     # Pull the training and validation data and store to data/data.zarr
-    n_jobs = 26*2 # 2 jobs per year
+    n_jobs = 26*12 # 1 job per month
     for jid in range(n_jobs):
         submit_slurm_job(jid, n_jobs, mode="training")
+        time.sleep(10)
 
-    n_jobs_valid = 2*2 # 2 jobs per year
+    n_jobs_valid = 2*12 # 1 job per month or so
     for jid in range(n_jobs_valid):
         submit_slurm_job(jid, n_jobs_valid, mode="validation")
+        time.sleep(10)
