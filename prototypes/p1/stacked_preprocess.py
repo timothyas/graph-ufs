@@ -106,6 +106,7 @@ def fill_some_indices():
             60134 - 60140 (inclusive),
             61389, 61390,
             63337, 63338,
+            69029
 
         Just ... hangs with no end in sight
             14577, 14578
