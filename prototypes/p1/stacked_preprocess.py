@@ -110,6 +110,13 @@ def fill_some_indices():
 
         Just ... hangs with no end in sight
             14577, 14578
+
+    Note:
+        These indices are a problem specifically to the zarr store on I already created on Lustre in Azure.
+        I was unable to recreate the problem on GCP and on Azure /contrib2.
+        Maybe something has corrupted the original zarr store, I have no idea.
+        Googling around shows some random problems with blosc, and so in the future we may want to either use
+        zlib or just no compression at all.
     """
 
 

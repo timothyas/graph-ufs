@@ -70,6 +70,7 @@ if __name__ == "__main__":
 
     inputs, _ = trainer.get_data()
     params, state = init_model(p1, inputs, last_input_channel_mapping)
+    p1.save_checkpoint(params, id=0)
 
     loss_name = f"{p1.local_store_path}/loss.nc"
     if os.path.exists(loss_name):
@@ -114,6 +115,6 @@ if __name__ == "__main__":
         p1.save_checkpoint(params, id=e+1)
         timer1.stop(f"Done with epoch {e+1}")
 
+    logging.info("Done Training")
     trainer.shutdown()
     validator.shutdown()
-    logging.info("Done Training")

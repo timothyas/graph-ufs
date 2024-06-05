@@ -757,6 +757,8 @@ class ReplayEmulator:
             )
             checkpoint.dump(f, ckpt)
 
+        logging.info(f"Stored checkpoint: {ckpt_path}")
+
     def checkpoint_exists(self, id):
         ckpt_path = os.path.join(self.checkpoint_dir, f"model_{id}.npz")
         return os.path.exists(ckpt_path)

@@ -82,8 +82,8 @@ class P1Emulator(ReplayEmulator):
     )
 
     # training protocol
-    batch_size = 32
-    num_epochs = 2
+    batch_size = 16
+    num_epochs = 150
     chunks_per_epoch = 48
     steps_per_chunk = None
     checkpoint_chunks = 1
@@ -93,7 +93,7 @@ class P1Emulator(ReplayEmulator):
     store_loss = True
 
     # multi GPU and xla options
-    num_gpus = 1
+    num_gpus = 4
     log_only_rank0 = False
     use_jax_distributed = False
     use_xla_flags = False
