@@ -225,8 +225,17 @@ class Dataset():
         y = y.chunk(self.chunks)
         spatial_region = {k : slice(None, None) for k in x.dims if k != "sample"}
         region = {"sample": slice(idx, idx+1), **spatial_region}
-        x.to_dataset(name="inputs").to_zarr(self.local_inputs_path, region=region)
-        y.to_dataset(name="targets").to_zarr(self.local_targets_path, region=region)
+        for name, array, path in zip(
+            ["inputs", "targets"],
+            [x, y],
+            [self.local_inputs_path, self.local_targets_path],
+        ):
+            if "batch" in array:
+                array = array.drop_vars("batch")
+            array.to_dataset(name=name).to_zarr(
+                path,
+                region=region,
+            )
 
     def get_container(self, template: xr.Dataset, name: str):
 
@@ -260,7 +269,10 @@ class Dataset():
             [self.local_inputs_path, self.local_targets_path],
         ):
             xds = self.get_container(template=template, name=name)
-            xds.to_zarr(path, compute=False, mode="w")
+            if "batch" in xds:
+                xds = xds.drop_vars("batch")
+            encoding = {name: {"compressor": None}}
+            xds.to_zarr(path, compute=False, mode="w", encoding=encoding, consolidated=True)
 
 
 class PackedDataset():

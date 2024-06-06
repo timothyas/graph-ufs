@@ -7,7 +7,7 @@ import numpy as np
 import dask
 
 from graphufs.datasets import Dataset
-from p1stacked import P1Emulator
+from p1stackeduncompressed import P1Emulator
 
 from ufs2arco import Timer
 
@@ -65,7 +65,7 @@ def submit_slurm_job(job_id, n_jobs, mode):
         f"#SBATCH --partition={_partition}\n"+\
         f"#SBATCH -t 03:00:00\n\n"+\
         f"source /contrib2/Tim.Smith/miniconda3/etc/profile.d/conda.sh\n"+\
-        f"conda activate graphufs-cpu\n"+\
+        f"conda activate graphufs-cpu2\n"+\
         f'python -c "{the_code}"'
 
     script_dir = "job-scripts"
@@ -91,7 +91,11 @@ def store_batch_of_samples(jid, n_jobs, mode):
     logging.info(f"Processing indices: {start} - {end}")
 
     for idx in range(start, end):
-        tds.store_sample(idx)
+        try:
+            tds.store_sample(idx)
+        except RuntimeError:
+            logging.error(f" *** Runtime error with sample {idx} *** ")
+
         if idx % 10 == 0:
             logging.info(f"Done with sample {idx}")
 

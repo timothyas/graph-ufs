@@ -31,7 +31,7 @@ if __name__ == "__main__":
     # parse arguments
     p1, args = P1Emulator.from_parser()
     init_devices(p1)
-    dask.config.set(scheduler="threads", num_workers=16)
+    dask.config.set(scheduler="threads", num_workers=p1.dask_threads)
 
     tds = Dataset(
         p1,
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     # setup optimizer
     steps_in_epoch = len(trainer)
     n_total = p1.num_epochs * steps_in_epoch
-    n_linear = max( n_total // 100, steps_in_epoch )
+    n_linear = steps_in_epoch
     n_cosine = n_total - n_linear
     optimizer = graphufs_optimizer(
         n_linear=n_linear,
