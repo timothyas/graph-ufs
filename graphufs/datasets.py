@@ -230,7 +230,7 @@ class Dataset():
             [x, y],
             [self.local_inputs_path, self.local_targets_path],
         ):
-            if "batch" in array:
+            if "batch" in array.coords:
                 array = array.drop_vars("batch")
             array.to_dataset(name=name).to_zarr(
                 path,
