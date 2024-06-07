@@ -8,7 +8,7 @@ import dask
 from distributed import Client
 
 from graphufs.datasets import Dataset, PackedDataset
-from graphufs.batchloader import BatchLoader
+from graphufs.batchloader import XBatchLoader, BatchLoader
 #from graphufs.tensorstore import PackedDataset as TSPackedDataset, BatchLoader as TSBatchLoader
 
 from ufs2arco import Timer
@@ -28,8 +28,8 @@ class Formatter(logging.Formatter):
         record.relativeCreated = record.relativeCreated // 1000
         return super().format(record)
 
-def print_time(batch_size, avg_time):
-    print(f" --- Time to read batch_size = {p1.batch_size} --- ")
+def print_time(batch_size, avg_time, work="read"):
+    print(f" --- Time to {work} batch_size = {batch_size} --- ")
     print(f"\tnum_workers\t avg seconds / batch")
     for key, val in avg_time.items():
         print(f"\t{key}\t\t{val}")
@@ -38,14 +38,11 @@ def remote_read_test(p1, num_tries=10):
     """Find optimal number of dask worker threads to read a single batch of data"""
 
     timer1 = Timer()
-    timer2 = Timer()
-
 
     training_data = Dataset(
         p1,
         mode="training",
-        preload_batch=True,
-        chunks={"batch":1, "lat":-1, "lon":-1, "channels":13},
+        preload_batch=False,
     )
     trainer = BatchLoader(
         training_data,
@@ -55,7 +52,42 @@ def remote_read_test(p1, num_tries=10):
         num_workers=0,
     )
 
-    write_dir = "/lustre-12/test-remote-io"
+    # --- What's the optimal number of dask worker threads to read a batch of data?
+    iterloader = iter(trainer)
+    avg_time = dict()
+    for num_workers in [4, 8, 16, 24, 32, 48, 64, 96]:
+        with dask.config.set(scheduler="threads", num_workers=num_workers):
+            timer1.start(f"{num_workers}")
+            for k in range(num_tries):
+                x,y = next(iterloader)
+
+            elapsed = timer1.stop(f"Time with {num_workers} workers = ")
+            avg_time[num_workers] = elapsed / num_tries
+
+    print_time(p1.batch_size, avg_time)
+
+def remote_readwrite_test(p1, num_tries=10, write_dir="./test-remote-io", batch_size=None):
+    """Find optimal number of dask worker threads to read a single batch of data"""
+
+    timer1 = Timer()
+    timer2 = Timer()
+
+
+    batch_size=p1.batch_size if batch_size is None else batch_size
+    training_data = Dataset(
+        p1,
+        mode="training",
+        preload_batch=True,
+        chunks={"batch":1, "lat":-1, "lon":-1, "channels":13},
+    )
+    trainer = XBatchLoader(
+        training_data,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=0,
+    )
+
     if os.path.isdir(write_dir):
         shutil.rmtree(write_dir)
 
@@ -81,10 +113,8 @@ def remote_read_test(p1, num_tries=10):
             avg_time[num_workers] = elapsed / num_tries
             avg_write_time[num_workers] = write_elapsed / num_tries
 
-    print_time(p1.batch_size, avg_time)
-    print()
-    print(" Write time ")
-    print_time(p1.batch_size, avg_write_time)
+    print_time(batch_size, avg_time)
+    print_time(batch_size, avg_write_time, work="write")
 
 def remote_read_dask_distributed(p1, num_tries=10):
 
@@ -118,18 +148,21 @@ def remote_read_dask_distributed(p1, num_tries=10):
     print_time(p1.batch_size, avg_time)
 
 
-def local_read_test(p1, num_tries=10):
+def local_read_test(p1, num_tries=10, read_dir=None, batch_size=None):
     """Find optimal number of dask worker threads to read a single batch of data"""
     timer1 = Timer()
 
+    if read_dir is not None:
+        p1.local_store_path = read_dir
 
+    batch_size=p1.batch_size if batch_size is None else batch_size
     training_data = PackedDataset(
         p1,
         mode="training",
     )
     trainer = BatchLoader(
         training_data,
-        batch_size=p1.batch_size,
+        batch_size=batch_size,
         shuffle=True,
         drop_last=True,
         num_workers=0,
@@ -145,8 +178,11 @@ def local_read_test(p1, num_tries=10):
                 next(iterloader)
             elapsed = timer1.stop(f"Time with {num_workers} workers = ")
             avg_time[num_workers] = elapsed / num_tries
+        iterloader = iter(trainer)
 
-    print_time(p1.batch_size, avg_time)
+    if read_dir is not None:
+        print(f" Read time on {read_dir} ")
+    print_time(batch_size, avg_time)
 
 
 def local_tensorstore_test(p1, num_tries=10):
@@ -197,7 +233,13 @@ if __name__ == "__main__":
     # parse arguments
     p1, args = P1Emulator.from_parser()
 
-    remote_read_test(p1, num_tries=5)
+    #remote_read_test(p1, num_tries=5)
+    remote_readwrite_test(p1, num_tries=5, write_dir="/lustre/test-remote-io", batch_size=4)
+    remote_readwrite_test(p1, num_tries=5, write_dir="/lustre/test-remote-io", batch_size=16)
+    remote_readwrite_test(p1, num_tries=5, write_dir="/lustre/test-remote-io", batch_size=64)
+    remote_readwrite_test(p1, num_tries=5, write_dir="/p1fs/test-remote-io", batch_size=4)
+    remote_readwrite_test(p1, num_tries=5, write_dir="/p1fs/test-remote-io", batch_size=16)
+    remote_readwrite_test(p1, num_tries=5, write_dir="/p1fs/test-remote-io", batch_size=64)
     #local_read_test(p1)
     #local_tensorstore_test(p1)
     #remote_read_dask_distributed(p1, num_tries=5)
