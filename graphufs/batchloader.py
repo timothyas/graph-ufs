@@ -117,10 +117,10 @@ class BatchLoader():
         else:
             return self._next_data()
 
-    def restart(self):
+    def restart(self, idx=0):
 
         # reset the counter for how many items have been put in the queue
-        self.data_counter = 0
+        self.data_counter = idx
 
         # first create a new stop_event and shuffle the indices
         self.stop_event = threading.Event()
@@ -157,6 +157,8 @@ class XBatchLoader(BatchLoader):
             ed = st + self.batch_size
             batch_indices = self.sample_indices[st:ed]
             x, y = self.dataset[batch_indices]
+            x.load()
+            y.load()
             self.data_counter += 1
             return x, y
         else:

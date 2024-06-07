@@ -218,6 +218,9 @@ class Dataset():
 
     def store_sample(self, idx: int) -> None:
         x,y = self[idx]
+
+        x = x.load()
+        y = y.load()
         x = x.expand_dims("batch").rename({"batch": "sample"})
         y = y.expand_dims("batch").rename({"batch": "sample"})
 
