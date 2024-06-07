@@ -1,12 +1,15 @@
+import os
 import logging
 import sys
 import numpy as np
+import shutil
 
 import dask
+from distributed import Client
 
-from graphufs.datasets import PackedDataset
+from graphufs.datasets import Dataset, PackedDataset
 from graphufs.batchloader import BatchLoader
-from graphufs.tensorstore import PackedDataset as TSPackedDataset, BatchLoader as TSBatchLoader
+#from graphufs.tensorstore import PackedDataset as TSPackedDataset, BatchLoader as TSBatchLoader
 
 from ufs2arco import Timer
 
@@ -31,8 +34,94 @@ def print_time(batch_size, avg_time):
     for key, val in avg_time.items():
         print(f"\t{key}\t\t{val}")
 
+def remote_read_test(p1, num_tries=10):
+    """Find optimal number of dask worker threads to read a single batch of data"""
+
+    timer1 = Timer()
+    timer2 = Timer()
+
+
+    training_data = Dataset(
+        p1,
+        mode="training",
+        preload_batch=True,
+        chunks={"batch":1, "lat":-1, "lon":-1, "channels":13},
+    )
+    trainer = BatchLoader(
+        training_data,
+        batch_size=p1.batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=0,
+    )
+
+    write_dir = "/lustre-12/test-remote-io"
+    if os.path.isdir(write_dir):
+        shutil.rmtree(write_dir)
+
+    # --- What's the optimal number of dask worker threads to read a batch of data?
+    iterloader = iter(trainer)
+    avg_time = dict()
+    avg_write_time = dict()
+    for num_workers in [4, 8, 16, 32]:
+        with dask.config.set(scheduler="threads", num_workers=num_workers):
+            timer1.start(f"{num_workers}")
+            write_elapsed = 0.
+            for k in range(num_tries):
+                x,y = next(iterloader)
+                timer2.start()
+                x=x.chunk(training_data.chunks)
+                y=y.chunk(training_data.chunks)
+                x.to_dataset(name="inputs").to_zarr(f"{write_dir}/inputs.{num_workers}.{k}.zarr", mode="w")
+                y.to_dataset(name="targets").to_zarr(f"{write_dir}/targets.{num_workers}.{k}.zarr", mode="w")
+                write_elapsed += timer2.stop(None)
+
+            elapsed = timer1.stop(f"Time with {num_workers} workers = ")
+            elapsed -= write_elapsed
+            avg_time[num_workers] = elapsed / num_tries
+            avg_write_time[num_workers] = write_elapsed / num_tries
+
+    print_time(p1.batch_size, avg_time)
+    print()
+    print(" Write time ")
+    print_time(p1.batch_size, avg_write_time)
+
+def remote_read_dask_distributed(p1, num_tries=10):
+
+    timer1 = Timer()
+
+    training_data = Dataset(
+        p1,
+        mode="training",
+        preload_batch=True,
+    )
+    trainer = BatchLoader(
+        training_data,
+        batch_size=p1.batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=0,
+    )
+
+    iterloader = iter(trainer)
+    avg_time = dict()
+
+    for n_workers in [2, 4, 8, 16]:
+        client = Client(n_workers=n_workers)
+        timer1.start(f"{n_workers}")
+        for _ in range(num_tries):
+            next(iterloader)
+        elapsed = timer1.stop(f"Time with {n_workers} workers = ")
+        avg_time[n_workers] = elapsed / num_tries
+        client.close()
+
+    print_time(p1.batch_size, avg_time)
+
+
 def local_read_test(p1, num_tries=10):
     """Find optimal number of dask worker threads to read a single batch of data"""
+    timer1 = Timer()
+
 
     training_data = PackedDataset(
         p1,
@@ -66,6 +155,8 @@ def local_tensorstore_test(p1, num_tries=10):
 
     dask is not used, so nothing to change there.
     """
+    timer1 = Timer()
+
 
     training_data = TSPackedDataset(
         p1,
@@ -93,7 +184,6 @@ def local_tensorstore_test(p1, num_tries=10):
 
 if __name__ == "__main__":
 
-    timer1 = Timer()
 
     logging.basicConfig(
         stream=sys.stdout,
@@ -107,5 +197,7 @@ if __name__ == "__main__":
     # parse arguments
     p1, args = P1Emulator.from_parser()
 
-    local_read_test(p1)
-    local_tensorstore_test(p1)
+    remote_read_test(p1, num_tries=5)
+    #local_read_test(p1)
+    #local_tensorstore_test(p1)
+    #remote_read_dask_distributed(p1, num_tries=5)
