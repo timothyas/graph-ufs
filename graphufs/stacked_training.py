@@ -79,7 +79,14 @@ def init_model(emulator, inputs, last_input_channel_mapping):
         predictor = construct_wrapped_graphcast(emulator, last_input_channel_mapping)
         return predictor(inputs)
 
-    params, state = run_forward.init(
+    devices = jax.devices()
+    sharding = PositionalSharding(devices)
+    sharding = sharding.reshape((emulator.num_gpus, 1, 1, 1))
+
+    inputs = jax.device_put(inputs, sharding)
+
+    init = jax.jit( run_forward.init )
+    params, state = init(
         rng=PRNGKey(emulator.init_rng_seed),
         inputs=inputs,
     )
