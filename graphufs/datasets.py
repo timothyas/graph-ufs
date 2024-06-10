@@ -286,11 +286,11 @@ class PackedDataset():
     that BatchLoader can pull a full batch in a single dask/zarr call
     """
 
-    def __init__(self, emulator, mode):
+    def __init__(self, emulator, mode, **kwargs):
         self.emulator = emulator
         self.mode = mode
-        self.inputs = xr.open_zarr(self.local_inputs_path)
-        self.targets = xr.open_zarr(self.local_targets_path)
+        self.inputs = xr.open_zarr(self.local_inputs_path, **kwargs)
+        self.targets = xr.open_zarr(self.local_targets_path, **kwargs)
 
     def __len__(self):
         return len(self.inputs["sample"])
