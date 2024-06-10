@@ -9,7 +9,7 @@ from distributed import Client
 
 from graphufs.datasets import Dataset, PackedDataset
 from graphufs.batchloader import XBatchLoader, BatchLoader
-#from graphufs.tensorstore import PackedDataset as TSPackedDataset, BatchLoader as TSBatchLoader
+
 
 from ufs2arco import Timer
 
@@ -77,7 +77,7 @@ def remote_readwrite_test(p1, num_tries=10, write_dir="./test-remote-io", batch_
     training_data = Dataset(
         p1,
         mode="training",
-        preload_batch=True,
+        preload_batch=False,
         chunks={"batch":1, "lat":-1, "lon":-1, "channels":13},
     )
     trainer = XBatchLoader(
@@ -123,9 +123,9 @@ def remote_read_dask_distributed(p1, num_tries=10):
     training_data = Dataset(
         p1,
         mode="training",
-        preload_batch=True,
+        preload_batch=False,
     )
-    trainer = BatchLoader(
+    trainer = XBatchLoader(
         training_data,
         batch_size=p1.batch_size,
         shuffle=True,
@@ -159,6 +159,12 @@ def local_read_test(p1, num_tries=10, read_dir=None, batch_size=None):
     training_data = PackedDataset(
         p1,
         mode="training",
+        chunks={
+            "sample": 1,
+            "lat": -1,
+            "lon": -1,
+            "channels": -1,
+        },
     )
     trainer = BatchLoader(
         training_data,
@@ -171,7 +177,7 @@ def local_read_test(p1, num_tries=10, read_dir=None, batch_size=None):
     # --- What's the optimal number of dask worker threads to read a batch of data?
     iterloader = iter(trainer)
     avg_time = dict()
-    for num_workers in [1, 2, 4, 8, 16, 24, 32]:
+    for num_workers in [8, 16, 32]:#[1, 2, 4, 8, 16, 24, 32]:
         with dask.config.set(scheduler="threads", num_workers=num_workers):
             timer1.start()
             for _ in range(num_tries):
@@ -191,6 +197,9 @@ def local_tensorstore_test(p1, num_tries=10):
 
     dask is not used, so nothing to change there.
     """
+
+    from graphufs.tensorstore import PackedDataset as TSPackedDataset, BatchLoader as TSBatchLoader
+
     timer1 = Timer()
 
 
@@ -234,12 +243,6 @@ if __name__ == "__main__":
     p1, args = P1Emulator.from_parser()
 
     #remote_read_test(p1, num_tries=5)
-    remote_readwrite_test(p1, num_tries=5, write_dir="/lustre/test-remote-io", batch_size=4)
-    remote_readwrite_test(p1, num_tries=5, write_dir="/lustre/test-remote-io", batch_size=16)
-    remote_readwrite_test(p1, num_tries=5, write_dir="/lustre/test-remote-io", batch_size=64)
-    remote_readwrite_test(p1, num_tries=5, write_dir="/p1fs/test-remote-io", batch_size=4)
-    remote_readwrite_test(p1, num_tries=5, write_dir="/p1fs/test-remote-io", batch_size=16)
-    remote_readwrite_test(p1, num_tries=5, write_dir="/p1fs/test-remote-io", batch_size=64)
-    #local_read_test(p1)
-    #local_tensorstore_test(p1)
-    #remote_read_dask_distributed(p1, num_tries=5)
+   # local_read_test(p1)
+    local_tensorstore_test(p1)
+   # remote_read_dask_distributed(p1, num_tries=5)

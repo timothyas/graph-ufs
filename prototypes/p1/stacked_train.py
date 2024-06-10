@@ -10,6 +10,7 @@ import dask
 from graphufs import init_devices
 from graphufs.utils import get_last_input_mapping
 from graphufs.datasets import Dataset, PackedDataset
+from graphufs.tensorstore import PackedDataset as TSPackedDataset, BatchLoader as TSBatchLoader
 from graphufs.batchloader import BatchLoader
 from graphufs.stacked_training import init_model, optimize
 
@@ -36,17 +37,17 @@ if __name__ == "__main__":
     tds = Dataset(
         p1,
         mode="training",
-        preload_batch=True,
+        preload_batch=False,
     )
-    training_data = PackedDataset(
+    training_data = TSPackedDataset(
         p1,
         mode="training",
     )
-    valid_data = PackedDataset(
+    valid_data = TSPackedDataset(
         p1,
         mode="validation",
     )
-    trainer = BatchLoader(
+    trainer = TSBatchLoader(
         training_data,
         batch_size=p1.batch_size,
         shuffle=True,
@@ -54,7 +55,7 @@ if __name__ == "__main__":
         num_workers=p1.num_workers,
         max_queue_size=p1.max_queue_size,
     )
-    validator = BatchLoader(
+    validator = TSBatchLoader(
         valid_data,
         batch_size=p1.batch_size,
         shuffle=False,
