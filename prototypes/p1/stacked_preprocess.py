@@ -8,12 +8,12 @@ import dask
 
 from graphufs.batchloader import XBatchLoader
 from graphufs.datasets import Dataset
-from p1stackeduncompressed import P1Emulator
+from p1stacked import P1Emulator
 
 from ufs2arco import Timer
 
-_n_cpus = 32
-_partition = "cpuD32v3-spot"
+_n_cpus = 48
+_partition = "cpuD48v3"
 
 class SimpleFormatter(logging.Formatter):
     def format(self, record):
@@ -39,7 +39,7 @@ def setup(mode, level=logging.INFO):
     tds = Dataset(
         p1,
         mode=mode,
-        preload_batch=True,
+        preload_batch=False,
         chunks={
             "sample": 1,
             "lat": -1,
@@ -49,38 +49,38 @@ def setup(mode, level=logging.INFO):
     )
     loader = XBatchLoader(
         tds,
-        batch_size=1,
+        batch_size=p1.batch_size,
         shuffle=False,
         drop_last=False,
         num_workers=1,
         max_queue_size=1,
     )
-    dask.config.set(scheduler="threads", num_workers=_n_cpus//2)
+    dask.config.set(scheduler="threads", num_workers=p1.dask_threads)
     return p1, tds, loader
 
 
-def submit_slurm_job(job_id, n_jobs, mode):
+def submit_slurm_job(mode):
 
     the_code = \
-        f"from stacked_preprocess import store_one_by_one\n"+\
-        f"store_one_by_one({job_id}, {n_jobs}, '{mode}')\n"
+        f"from stacked_preprocess import store_batch_of_samples\n"+\
+        f"store_batch_of_samples('{mode}')\n"
 
     slurm_dir = f"slurm/stacked-preprocess/{mode}"
     txt = "#!/bin/bash\n\n" +\
-        f"#SBATCH -J sp{mode[0]}{job_id:03d}\n"+\
-        f"#SBATCH -o {slurm_dir}/{job_id:03d}.%j.out\n"+\
-        f"#SBATCH -e {slurm_dir}/{job_id:03d}.%j.err\n"+\
+        f"#SBATCH -J sp{mode[0]}\n"+\
+        f"#SBATCH -o {slurm_dir}/%j.out\n"+\
+        f"#SBATCH -e {slurm_dir}/%j.err\n"+\
         f"#SBATCH --nodes=1\n"+\
         f"#SBATCH --ntasks=1\n"+\
         f"#SBATCH --cpus-per-task={_n_cpus}\n"+\
         f"#SBATCH --partition={_partition}\n"+\
-        f"#SBATCH -t 03:00:00\n\n"+\
+        f"#SBATCH -t 120:00:00\n\n"+\
         f"source /contrib2/Tim.Smith/miniconda3/etc/profile.d/conda.sh\n"+\
         f"conda activate graphufs-cpu2\n"+\
         f'python -c "{the_code}"'
 
     script_dir = "job-scripts"
-    fname = f"{script_dir}/submit_sp_{mode}_{job_id:03d}.sh"
+    fname = f"{script_dir}/submit_sp_{mode}.sh"
 
     for this_dir in [slurm_dir, script_dir]:
         if not os.path.isdir(this_dir):
@@ -91,31 +91,16 @@ def submit_slurm_job(job_id, n_jobs, mode):
 
     subprocess.run(f"sbatch {fname}", shell=True)
 
-def store_batch_of_samples(jid, n_jobs, mode):
-    """The only difference here is that the write time is hidden via the thread pool in the loader.
-    But ... it doesn't help anything at all.
-    """
+def store_batch_of_samples(mode):
 
     p1, tds, loader = setup(mode)
 
-    index_chunks = np.linspace(0, len(tds), n_jobs+1)
-    start = int(index_chunks[jid])
-    end = int(index_chunks[jid+1])
-    logging.info(f"Job = {jid} / {n_jobs}")
-    logging.info(f"Processing indices: {start} - {end}")
+    logging.info(f"Processing {len(loader)} in batch_size: {p1.batch_size}")
 
-    loader.restart(idx=start)
-    loader.counter = start
+    for idx, (inputs, targets)  in enumerate(loader):
 
-    for idx in range(start, end):
-        logging.info(f" ... starting index {idx}")
-
-        inputs, targets = next(loader)
-
-        logging.info(f" ... loaded index {idx}")
-        inputs = inputs.expand_dims("batch").rename({"batch": "sample"}).chunk(tds.chunks)
-        targets = targets.expand_dims("batch").rename({"batch": "sample"}).chunk(tds.chunks)
-        logging.info(f" ... chunked index {idx}")
+        inputs = inputs.rename({"batch": "sample"}).chunk(tds.chunks)
+        targets = targets.rename({"batch": "sample"}).chunk(tds.chunks)
 
         idx0 = int(inputs.sample.isel(sample=0))
         idx1 = int(inputs.sample.isel(sample=-1))
@@ -130,7 +115,6 @@ def store_batch_of_samples(jid, n_jobs, mode):
         ):
 
             xda.to_dataset(name=name).to_zarr(path, region=region)
-            logging.info(f" ... stored batch {idx} {name}")
 
         if idx % 10 == 0:
             logging.info(f"Done with index {idx} / {len(loader)}")
@@ -160,38 +144,17 @@ def store_one_by_one(jid, n_jobs, mode):
 
 def fill_some_indices():
     """
-    Problem indices:
-
-        Runtime error related to blosc compression
-            14575, 14576,
-            60134 - 60140 (inclusive),
-            61389, 61390,
-            63337, 63338,
-            69029
-
-        Just ... hangs with no end in sight
-            14577, 14578
-
     Note:
-        These indices are a problem specifically to the zarr store on I already created on Lustre in Azure.
-        I was unable to recreate the problem on GCP and on Azure /contrib2.
-        Maybe something has corrupted the original zarr store, I have no idea.
-        Googling around shows some random problems with blosc, and so in the future we may want to either use
-        zlib or just no compression at all.
+        This was a hack to fill "problem indices" - basically some indices would fail during the initial
+        preprocessing, using multiple slurm jobs to run `store_one_by_one` concurrently.
+        This function would supposedly fill the rest of the job's indices, but this didn't end up working too well.
     """
 
 
     p1, tds, _ = setup("training")
 
     indices = np.concatenate([
-#        np.arange(13391, 13635),
-#        np.arange(14365, 14609),
-        np.arange(14579, 14609),
-        np.arange(51619, 51862),
-        np.arange(59897, 60141),
-        np.arange(61358, 61602),
-        np.arange(63306, 63550),
-        np.arange(68906, 69150),
+        np.arange(500, 2921), # etc
     ])
     for idx in indices:
         idx_int = int(idx)
@@ -221,12 +184,7 @@ if __name__ == "__main__":
         make_container(mode)
 
     # Pull the training and validation data and store to data/data.zarr
-    n_jobs = 26
-    for jid in range(n_jobs):
-        submit_slurm_job(jid, n_jobs, mode="training")
-        time.sleep(10)
-
-    n_jobs_valid = 2
-    for jid in range(n_jobs_valid):
-        submit_slurm_job(jid, n_jobs_valid, mode="validation")
-        time.sleep(10)
+    time.sleep(10)
+    submit_slurm_job("training")
+    time.sleep(10)
+    submit_slurm_job("validation")
