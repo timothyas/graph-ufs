@@ -14,14 +14,13 @@ if __name__ == "__main__":
     fig, axs = plt.subplots(1,2, figsize=(8,4), constrained_layout=True)
 
     axLR = axs[0].twinx()
-    ds.loss.plot(ax=axs[0], color="C0", label="Training Loss")
-    ds.learning_rate.plot(ax=axLR, color="C2", label="Learning Rate")
+    l1 = ds.loss.plot(ax=axs[0], color="C0", label="Training Loss")
+    l2 = ds.learning_rate.plot(ax=axLR, color="C2", label="Learning Rate")
 
     ds.loss_avg.plot(ax=axs[1], label="Training")
     ds.loss_valid.plot(ax=axs[1], label="Validation")
 
     for ax in axs:
-        ax.legend()
         for key in ["right", "top"]:
             ax.spines[key].set_visible(False)
     axLR.spines["top"].set_visible(False)
@@ -36,5 +35,12 @@ if __name__ == "__main__":
         xlabel="Epoch",
         ylabel="Loss Value",
     )
+    lines = [l1[0], l2[0]]
+    axs[0].legend(
+        lines,
+        list(l.get_label() for l in lines),
+        loc="center right",
+    )
+    axs[1].legend()
 
     fig.savefig("loss.pdf")
