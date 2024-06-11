@@ -80,7 +80,7 @@ if __name__ == "__main__":
     # setup optimizer
     steps_in_epoch = len(trainer)
     n_total = p1.num_epochs * steps_in_epoch
-    n_linear = steps_in_epoch
+    n_linear = 1_000
     n_cosine = n_total - n_linear
     optimizer = graphufs_optimizer(
         n_linear=n_linear,
