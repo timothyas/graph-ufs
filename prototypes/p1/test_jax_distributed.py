@@ -4,8 +4,11 @@ import os
 import xarray as xr
 
 
-jax.distributed.initialize(local_device_ids=range(2))
-
+jax.distributed.initialize(
+    coordinator_address="192.168.122.1:8892",
+    num_processes=2,
+    local_device_ids=range(4),
+)
 
 
 
@@ -44,6 +47,14 @@ if __name__ == "__main__":
     print()
 
 
+    # simple case
+    print(" --- simple test --- ")
+    xs = jax.numpy.ones(jax.local_device_count())
+    print("running jax.pmap ...")
+    print(jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(xs))
+    print()
+    print("done!")
+
     ds = xr.open_zarr("/lustre/stacked-p1-data-1year/training/inputs.zarr")
     st = _n_local*my_id
     ed = _n_local*(my_id+1)
@@ -60,7 +71,7 @@ if __name__ == "__main__":
     print("loss1: ", loss1)
     print(loss1.shape)
     print()
-    loss = jax.pmap(lambda z: jax.lax.psum(z, ["i", "j", "k", "l"]), axis_name=("i","j", "k", "l"))(x)
-    print("loss: ", loss)
-    print(loss.shape)
-    print()
+    #loss = jax.pmap(lambda z: jax.lax.psum(z, ["i", "j", "k", "l"]), axis_name=("i","j", "k", "l"))(x)
+    #print("loss: ", loss)
+    #print(loss.shape)
+    #print()

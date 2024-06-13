@@ -12,4 +12,5 @@
 source /contrib2/Tim.Smith/miniconda3/etc/profile.d/conda.sh
 conda activate graphufs
 
+ifconfig
 srun python test_jax_distributed.py
