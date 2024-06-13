@@ -43,4 +43,4 @@ if __name__ == "__main__":
     )
     axs[1].legend()
 
-    fig.savefig("loss.pdf")
+    fig.savefig("results/v1/loss.pdf")
