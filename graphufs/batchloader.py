@@ -1,3 +1,4 @@
+from math import ceil
 import numpy as np
 
 import threading
@@ -116,10 +117,10 @@ class BatchLoader():
         else:
             return self._next_data()
 
-    def restart(self):
+    def restart(self, idx=0):
 
         # reset the counter for how many items have been put in the queue
-        self.data_counter = 0
+        self.data_counter = idx
 
         # first create a new stop_event and shuffle the indices
         self.stop_event = threading.Event()
@@ -144,3 +145,21 @@ class BatchLoader():
         self.stop()
         if self.num_workers > 0:
             self.executor.shutdown()
+
+class XBatchLoader(BatchLoader):
+    """Returns xarray DataArrays with __getitem__ instead of numpy like arrays
+    Useful for preprocessing instead of training
+    """
+    def _next_data(self):
+
+        if self.data_counter < len(self):
+            st = self.data_counter * self.batch_size
+            ed = st + self.batch_size
+            batch_indices = self.sample_indices[st:ed]
+            x, y = self.dataset[batch_indices]
+            x.load()
+            y.load()
+            self.data_counter += 1
+            return x, y
+        else:
+            raise StopIteration

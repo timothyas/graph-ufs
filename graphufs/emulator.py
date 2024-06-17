@@ -619,7 +619,7 @@ class ReplayEmulator:
             mean_by_level, stddev_by_level, diffs_stddev_by_level (xarray.Dataset): with normalization fields
         """
 
-        def open_normalization(component, **kwargs):
+        def open_normalization(component):
 
             # try to read locally first
             local_path = os.path.join(
@@ -634,7 +634,7 @@ class ReplayEmulator:
                 foundit = True
 
             else:
-                xds = xr.open_zarr(self.norm_urls[component], **kwargs)
+                xds = xr.open_zarr(self.norm_urls[component], storage_options={"token":"anon"})
                 myvars = list(x for x in self.all_variables if x in xds)
                 xds = xds[myvars]
                 xds = xds.sel(pfull=self.levels)
@@ -847,6 +847,8 @@ class ReplayEmulator:
                 license="Public domain",
             )
             checkpoint.dump(f, ckpt)
+
+        logging.info(f"Stored checkpoint: {ckpt_path}")
 
     def checkpoint_exists(self, id):
         ckpt_path = os.path.join(self.checkpoint_dir, f"model_{id}.npz")

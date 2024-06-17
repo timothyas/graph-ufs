@@ -79,7 +79,14 @@ def init_model(emulator, inputs, last_input_channel_mapping):
         predictor = construct_wrapped_graphcast(emulator, last_input_channel_mapping)
         return predictor(inputs)
 
-    params, state = run_forward.init(
+    devices = jax.devices()
+    sharding = PositionalSharding(devices)
+    sharding = sharding.reshape((emulator.num_gpus, 1, 1, 1))
+
+    inputs = jax.device_put(inputs, sharding)
+
+    init = jax.jit( run_forward.init )
+    params, state = init(
         rng=PRNGKey(emulator.init_rng_seed),
         inputs=inputs,
     )
@@ -244,7 +251,7 @@ def optimize(
         target_batch = jax.device_put(target_batch, sharding)
 
         # call optimize
-        params, loss, diagnostics, _, grads = optimize.optim_step_jitted(
+        params, loss, diagnostics, opt_state, grads = optimize.optim_step_jitted(
             params=params,
             state=state,
             opt_state=opt_state,
@@ -263,7 +270,7 @@ def optimize(
         learning_rates.append(lr)
 
         progress_bar.set_description(
-            f"loss = {loss:.5f}, qsize = {trainer.data_queue.qsize()}",
+            f"loss = {loss:.5f}, qsize = {trainer.data_queue.qsize()}, LR = {lr:.2e}",
         )
         progress_bar.update()
 

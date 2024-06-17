@@ -11,7 +11,7 @@ class P1Emulator(ReplayEmulator):
         "stddiff": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.statistics.1993-2019/diffs_stddev_by_level.zarr",
     }
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2022-6h-64x32_equiangular_conservative.zarr"
-    local_store_path = "/lustre/stacked-p1-data-1year"
+    local_store_path = "/lustre/stacked-p1-data"
     cache_data = True
 
     # task config options
@@ -70,11 +70,11 @@ class P1Emulator(ReplayEmulator):
     target_lead_time = "3h"
     training_dates = (
         "1993-12-31T18",
-        "1994-12-31T21"
+        "2019-12-31T21"
     )
     validation_dates = (
         "2022-01-01T00",
-        "2022-02-01T00"
+        "2023-10-13T03"
     )
     testing_dates = (
         "2020-01-01T00",
@@ -82,20 +82,22 @@ class P1Emulator(ReplayEmulator):
     )
 
     # training protocol
-    batch_size = 32
-    num_epochs = 2
+    batch_size = 16
+    num_epochs = 50
     chunks_per_epoch = 48
     steps_per_chunk = None
     checkpoint_chunks = 1
     max_queue_size = 1
     num_workers = 1
     load_chunk = True
+    store_loss = True
 
     # multi GPU and xla options
-    num_gpus = 1
+    num_gpus = 4
     log_only_rank0 = False
     use_jax_distributed = False
     use_xla_flags = False
+    dask_threads = 16
 
     # model config options
     resolution = 1.0
