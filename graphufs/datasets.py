@@ -48,7 +48,7 @@ class Dataset():
                 "level": len(xds["level"]),
             },
             input_overlap={
-                "datetime": emulator.n_input,
+                "datetime": emulator.n_forecast-1,
             },
             preload_batch=preload_batch,
         )
@@ -99,6 +99,11 @@ class Dataset():
     @property
     def local_targets_path(self) -> str:
         return join(self.emulator.local_store_path, self.mode, "targets.zarr")
+
+    @property
+    def initial_times(self) -> list[np.datetime64]:
+        """Returns dates of all initial conditions"""
+        return [self.xds["datetime"].values[i + self.emulator.n_input - 1] for i in range(len(self))]
 
 
     @staticmethod
@@ -184,6 +189,7 @@ class Dataset():
 
         xinput, xtarget, xforcing = extract_inputs_targets_forcings(
             sample,
+            drop_datetime=False,
             **self.emulator.extract_kwargs,
         )
         xinput = xinput.expand_dims({"batch": [idx]})

@@ -43,6 +43,7 @@ class BatchLoader():
         num_workers=0,
         max_queue_size=1,
         rng_seed=None,
+        sample_stride=None,
     ):
 
         self.dataset = dataset
@@ -52,6 +53,9 @@ class BatchLoader():
 
         self.counter = 0
         self.sample_indices = list(int(idx) for idx in np.arange(len(self.dataset)))
+        self.sample_stride = sample_stride
+        if sample_stride is not None:
+            self.sample_indices = self.sample_indices[::sample_stride]
         self.rstate = np.random.RandomState(rng_seed)
 
         self.num_workers = num_workers
@@ -62,8 +66,13 @@ class BatchLoader():
 
         self.restart()
 
+    @property
+    def initial_times(self) -> list[np.datetime64]:
+        """Returns dates of all initial conditions"""
+        return self.dataset.initial_times[::self.sample_stride]
+
     def __len__(self) -> int:
-        n_samples = len(self.dataset)
+        n_samples = len(self.sample_indices)
         if self.drop_last:
             n_batches = n_samples // self.batch_size
         else:
@@ -161,5 +170,22 @@ class XBatchLoader(BatchLoader):
             y.load()
             self.data_counter += 1
             return x, y
+        else:
+            raise StopIteration
+
+class ExpandedBatchLoader(BatchLoader):
+    """Returns xarray DataArrays ready for original GraphCast, not Stacked form
+    """
+    def _next_data(self):
+
+        if self.data_counter < len(self):
+            st = self.data_counter * self.batch_size
+            ed = st + self.batch_size
+            batch_indices = self.sample_indices[st:ed]
+            data = self.dataset.get_batch_of_xarrays(batch_indices)
+            for d in data:
+                d.load()
+            self.data_counter += 1
+            return data
         else:
             raise StopIteration

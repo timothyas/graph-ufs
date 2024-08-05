@@ -10,7 +10,7 @@ class P1Emulator(ReplayEmulator):
         "std": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.statistics.1993-2019/stddev_by_level.zarr",
         "stddiff": "gcs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.statistics.1993-2019/diffs_stddev_by_level.zarr",
     }
-    wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2022-6h-64x32_equiangular_conservative.zarr"
+    wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
     local_store_path = "/lustre/stacked-p1-data"
     cache_data = True
 
@@ -67,7 +67,8 @@ class P1Emulator(ReplayEmulator):
     # time related
     delta_t = "3h"
     input_duration = "6h"
-    target_lead_time = "3h"
+    #target_lead_time = "3h"
+    target_lead_time = [f"{n}h" for n in range(6, 6*4*10+1, 6)]
     training_dates = (
         "1993-12-31T18",
         "2019-12-31T21"
@@ -78,7 +79,7 @@ class P1Emulator(ReplayEmulator):
     )
     testing_dates = (
         "2020-01-01T00",
-        "2020-02-01T00"
+        "2020-02-01T03",
     )
 
     # training protocol
@@ -91,6 +92,11 @@ class P1Emulator(ReplayEmulator):
     num_workers = 1
     load_chunk = True
     store_loss = True
+    use_preprocessed = False
+
+    # evaluation
+    sample_stride = 9 # sample every 27h, results in 569 ICs, ~1.6 TiB of data
+    evaluation_checkpoint_id = 50
 
     # multi GPU and xla options
     num_gpus = 4
