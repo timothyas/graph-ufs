@@ -2,7 +2,7 @@
 
 Example usage:
 
-    $ python forecast.py \
+    $ python forecast_member_remote.py \
             --ensemble_member=10 \
             --previous_cycle=2021120106 \
             --experiment_directory=/work2/noaa/gsienkf/whitaker/C96L127_graphufs_psonlyiau \
