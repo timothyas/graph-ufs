@@ -119,6 +119,8 @@ class ReplayEmulator:
         "pressfc"       : 0.1,
         "prateb_ave"    : 0.1,
     }
+    input_transforms = None
+    output_transforms = None
 
     # this is used for initializing the state in the gradient computation
     grad_rng_seed = None
@@ -202,6 +204,10 @@ class ReplayEmulator:
         logging.debug(f"self.n_target: {self.n_target}")
 
         # set normalization here so that we can jit compile with this class
+        # a bit annoying, have to copy datatypes here to avoid the Ghost Bus problem
+        self.norm_urls = self.norm_urls.copy()
+        self.norm = dict()
+        self.stacked_norm = dict()
         self.set_normalization()
         self.set_stacked_normalization()
 
@@ -209,6 +215,9 @@ class ReplayEmulator:
         if self.tisr_integration_period is None:
             self.tisr_integration_period = self.delta_t
 
+    @property
+    def name(self):
+        return str(type(self).__name__)
 
     @property
     def time_per_forecast(self):
@@ -287,9 +296,6 @@ class ReplayEmulator:
             newds (xarray.Dataset): subsampled/subset that we care about
         """
 
-        # select our vertical levels
-        xds = xds.sel(pfull=self.levels)
-
         # only grab variables we care about
         myvars = list(x for x in self.all_variables if x in xds)
         xds = xds[myvars]
@@ -297,7 +303,24 @@ class ReplayEmulator:
         if new_time is not None:
             xds = xds.sel(time=new_time)
 
+        # select our vertical levels
+        xds = xds.sel(pfull=self.levels)
+
+        # if we have any transforms to apply, do it here
+        xds = self.transform_variables(xds)
         return xds
+
+
+    def transform_variables(self, xds):
+        """e.g. transform spfh -> log(spfh), but keep the name the same for ease with GraphCast code"""
+        if self.input_transforms is not None:
+            for key, mapping in self.input_transforms.items():
+                logging.info(f"{type(self).__name__}: transforming {key} -> {mapping.__name__}({key})")
+                with xr.set_options(keep_attrs=True):
+                    xds[key] = mapping(xds[key])
+                xds[key].attrs["transformation"] = f"this variable shows {mapping.__name__}({key})"
+        return xds
+
 
     def check_for_ints(self, xds):
         """Turn data variable integers into floats, because otherwise the normalization in GraphCast goes haywire
@@ -662,17 +685,43 @@ class ReplayEmulator:
                 os.path.basename(self.norm_urls[component]),
             )
 
+
+
             if os.path.isdir(local_path):
                 xds = xr.open_zarr(local_path)
+                myvars = list(x for x in self.all_variables if x in xds)
+                xds = xds[myvars]
                 xds = xds.load()
                 foundit = True
 
             else:
-                xds = xr.open_zarr(self.norm_urls[component], storage_options={"token":"anon"})
+                kwargs = {"storage_options": {"token": "anon"}} if any(x in self.norm_urls[component] for x in ["gs://", "gcs://"]) else {}
+                xds = xr.open_zarr(self.norm_urls[component], **kwargs)
+                myvars = list(x for x in self.all_variables if x in xds)
                 # keep attributes in order to distinguish static from time varying components
                 with xr.set_options(keep_attrs=True):
-                    myvars = list(x for x in self.all_variables if x in xds)
+
+                    if self.input_transforms is not None:
+                        for key, transform_function in self.input_transforms.items():
+
+                            # make sure e.g. log_spfh is in the dataset
+                            transformed_key = f"{transform_function.__name__}_{key}" # e.g. log_spfh
+                            assert transformed_key in xds, \
+                                f"Emulator.set_normalization: couldn't find {transformed_key} in {component} normalization dataset"
+                            # there's a chance the original, e.g. spfh, is not in the dataset
+                            # if it is, replace it with e.g. log_spfh
+                            if key in myvars:
+                                idx = myvars.index(key)
+                                myvars[idx] = transformed_key
                     xds = xds[myvars]
+                    if self.input_transforms is not None:
+                        for key, transform_function in self.input_transforms.items():
+                            transformed_key = f"{transform_function.__name__}_{key}" # e.g. log_spfh
+                            idx = myvars.index(transformed_key)
+                            myvars[idx] = key
+
+                            # necessary for graphcast.dataset to stacked operations
+                            xds = xds.rename({transformed_key: key})
                     xds = xds.sel(pfull=self.levels)
                     xds = xds.load()
                     xds = xds.rename({"pfull": "level"})
