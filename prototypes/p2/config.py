@@ -15,7 +15,7 @@ def log(xda):
 def exp(xda):
     return np.exp(xda)
 
-class P2Emulator(FVEmulator):
+class P2TrainingEmulator(FVEmulator):
 
     # paths
     data_url = "gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.zarr"
@@ -77,25 +77,25 @@ class P2Emulator(FVEmulator):
     interfaces = tuple(x for x in range(200, 1001, 50))
 
     # time related
-    delta_t = "3h"              # the model time step
-    input_duration = "6h"      # time covered by initial condition(s) + delta_t (necessary for GraphCast code)
-    target_lead_time = "3h"     # how long is the forecast ... at what point do we compare model to targets
-    training_dates = (          # bounds of training data (inclusive)
-        "1994-01-01T00",        # start
-        "2019-12-31T18"         # stop
+    delta_t = "3h"
+    input_duration = "6h"
+    target_lead_time = "3h"
+    training_dates = (
+        "1994-01-01T00",
+        "2019-12-31T18",
     )
-    testing_dates = (        # bounds of testing data (inclusive)
-        "2020-01-01T00",        # start
-        "2021-12-31T18"         # stop
+    validation_dates = (
+        "2022-01-01T00",
+        "2023-10-13T03",
     )
-    validation_dates = (        # bounds of validation data (inclusive)
-        "2022-01-01T00",        # start
-        "2023-10-13T03"         # stop
+    testing_dates = (
+        "2020-01-01T00",
+        "2021-12-31T18",
     )
 
     # training protocol
-    batch_size = 16
-    num_epochs = 50
+    batch_size = 32
+    num_epochs = 130
 
     # model config options
     resolution = 1.0
@@ -134,8 +134,23 @@ class P2Emulator(FVEmulator):
     use_jax_distributed = False
     use_xla_flags = False
 
+class P2EvaluationEmulator(P2TrainingEmulator):
+    wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
+    target_lead_time = [f"{n}h" for n in range(3, 3*8*10+1, 3)]
+    sample_stride = 9
+    evaluation_checkpoint_id = 130
+    num_gpus = 1
+
+
+
 tree_util.register_pytree_node(
-    P2Emulator,
-    P2Emulator._tree_flatten,
-    P2Emulator._tree_unflatten
+    P2TrainingEmulator,
+    P2TrainingEmulator._tree_flatten,
+    P2TrainingEmulator._tree_unflatten
+)
+
+tree_util.register_pytree_node(
+    P2EvaluationEmulator,
+    P2EvaluationEmulator._tree_flatten,
+    P2EvaluationEmulator._tree_unflatten
 )
