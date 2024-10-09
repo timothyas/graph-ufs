@@ -104,9 +104,6 @@ class ReplayEmulator:
                                                 # Grid2Mesh graph. Reasonable values are between 0.6 and 1. 0.6 reduces
                                                 # the number of grid points feeding into multiple mesh nodes and therefore
                                                 # reduces edge count and memory use, but gives better predictions.
-    mesh2grid_edge_normalization_factor = 0.6180338738074472 # Allows explicitly controlling edge normalization for mesh2grid edges.
-                                                             # If None, defaults to max edge length.This supports using pre-trained
-                                                             # model weights with a different graph structure to what it was trained on.
     mesh2grid_edge_normalization_factor = None
 
     # loss weighting, defaults to GraphCast implementation
