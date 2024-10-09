@@ -71,13 +71,12 @@ class FVStatisticsComputer(StatisticsComputer):
         if data_vars is not None:
             if isinstance(data_vars, str):
                 data_vars = [data_vars]
-            if "delz" not in data_vars:
-                data_vars.append("delz")
-
-            logging.info(f"{self.name}: computing statistics for {data_vars}")
-            xds = xds[data_vars]
+            xds = xds[data_vars+["delz"]]
 
         # regrid in the vertical
         logging.info(f"{self.name}: starting vertical regridding")
         xds = fv_vertical_regrid(xds, interfaces=list(self.interfaces))
+
+        xds = xds[data_vars]
+        logging.info(f"{self.name}: computing statistics for {data_vars}")
         return xds

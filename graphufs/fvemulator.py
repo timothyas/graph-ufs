@@ -171,7 +171,7 @@ def fv_vertical_regrid(xds, interfaces):
 
     # Do the regridding
     vars2d = [x for x in xds.data_vars if "pfull" not in xds[x].dims]
-    vars3d = [x for x in xds.data_vars if "pfull" in xds[x].dims]
+    vars3d = [x for x in xds.data_vars if "pfull" in xds[x].dims and x != "delz"]
     for key in vars3d:
         with xr.set_options(keep_attrs=True):
             nds[key] = new_delz_inverse * (
