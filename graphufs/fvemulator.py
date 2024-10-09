@@ -189,7 +189,7 @@ def fv_vertical_regrid(xds, interfaces):
     for key in vars3d:
         with xr.set_options(keep_attrs=True):
             nds[key] = nds[key].swap_dims({"pfull_bins": "pfull"})
-        nds[key].attrs["regridding"] = "delz weighted average in vertical, new coordinate bounds represented by 'pfull_bins'"
+        nds[key].attrs["regridding"] = "delz weighted average in vertical, new coordinate bounds represented by 'phalf'"
     for v in vars2d:
         nds[v] = xds[v]
 

@@ -20,11 +20,11 @@ class P2TrainingEmulator(FVEmulator):
     # paths
     data_url = "gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.zarr"
     norm_urls = {
-        "mean": "/p2-lustre/fv3.fvstatistics.1993-2019/mean_by_level.zarr",
-        "std": "/p2-lustre/fv3.fvstatistics.1993-2019/stddev_by_level.zarr",
-        "stddiff": "/p2-lustre/fv3.fvstatistics.1993-2019/diffs_stddev_by_level.zarr",
+        "mean": "gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.fvstatistics.trop16.1993-2019/mean_by_level.zarr",
+        "std": "gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.fvstatistics.trop16.1993-2019/stddev_by_level.zarr",
+        "stddiff": "gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.fvstatistics.trop16.1993-2019/diffs_stddev_by_level.zarr",
     }
-    local_store_path = "/p2-lustre/p2"
+    local_store_path = "./local-storage"
 
     # these could be moved to a yaml file later
     # task config options

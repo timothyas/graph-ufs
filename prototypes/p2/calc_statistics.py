@@ -10,9 +10,9 @@ from graphufs.fvstatistics import FVStatisticsComputer
 from config import P2TrainingEmulator as Emulator
 
 
-def submit_slurm_job(varname, partition="cpuD32v5", n_cpus=32):
+def submit_slurm_job(varname, partition="compute", n_cpus=30):
 
-    logdir = "slurm/normalization"
+    logdir = "slurm/fvstats"
     scriptdir = "job-scripts"
     for d in [logdir, scriptdir]:
         if not os.path.isdir(d):
@@ -27,8 +27,9 @@ def submit_slurm_job(varname, partition="cpuD32v5", n_cpus=32):
         f"#SBATCH --cpus-per-task={n_cpus}\n"+\
         f"#SBATCH --partition={partition}\n"+\
         f"#SBATCH -t 120:00:00\n\n"+\
-        f"source /contrib2/Tim.Smith/miniconda3/etc/profile.d/conda.sh\n"+\
-        f"conda activate graphufs-cpu2\n"+\
+        f"source /contrib/Tim.Smith/miniconda3/etc/profile.d/conda.sh\n"+\
+        f"conda activate graphufs-cpu\n"+\
+        f"echo $PYTHONPATH\n"+\
         f"python -c 'from calc_statistics import main ; main(\"{varname}\")'"
 
     scriptname = f"{scriptdir}/submit_statistics_{varname}.sh"
@@ -46,13 +47,23 @@ def main(varname):
     path_out = os.path.dirname(Emulator.norm_urls["mean"])
     gcs_stats = lambda prefix : f"gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.statistics.1993-2019/{prefix}_by_level.zarr"
 
-    ds = xr.open_zarr(gcs_stats("mean"), storage_options={"token": "anon"})
+    open_zarr_kwargs = {
+        "storage_options": {"token": "anon"},
+    }
+
+    to_zarr_kwargs = {
+        "mode": "a",
+        "storage_options": {"token": "/contrib/Tim.Smith/.gcs/replay-service-account.json"},
+    }
+
+    ds = xr.open_zarr(gcs_stats("mean"), **open_zarr_kwargs)
     do_fv_calc = True
     if varname in ds:
         if "pfull" not in ds[varname].dims:
             do_fv_calc = False
 
     if do_fv_calc:
+        logging.info(f"Need to calculate statistics for {varname}")
         fvstats = FVStatisticsComputer(
             path_in=Emulator.data_url,
             path_out=path_out,
@@ -62,10 +73,8 @@ def main(varname):
             time_skip=None,
             load_full_dataset=False,
             transforms=Emulator.input_transforms,
-            open_zarr_kwargs={"storage_options": {"token": "anon"}},
-            to_zarr_kwargs={
-                "mode": "a",
-            },
+            open_zarr_kwargs=open_zarr_kwargs,
+            to_zarr_kwargs=to_zarr_kwargs
         )
 
         fvstats(varname)
@@ -74,10 +83,11 @@ def main(varname):
 
         store_path = lambda prefix : f"{path_out}/{prefix}_by_level.zarr"
         for prefix in ["mean", "stddev", "diffs_stddev"]:
-            ds = xr.open_zarr(gcs_stats(prefix), storage_options={"token": "anon"})
-            ds = ds[[varname]]
-            ds.to_zarr(store_path(prefix), mode="a")
-            logging.info(f"Pulled {varname} {prefix} from {gcs_stats(prefix)} to {store_path(prefix)}")
+            ds = xr.open_zarr(gcs_stats(prefix), **open_zarr_kwargs)
+            if varname in ds:
+                ds = ds[[varname]]
+                ds.to_zarr(store_path(prefix), **to_zarr_kwargs)
+                logging.info(f"Pulled {varname} {prefix} from {gcs_stats(prefix)} to {store_path(prefix)}")
 
 
 if __name__ == "__main__":
@@ -88,8 +98,6 @@ if __name__ == "__main__":
     ))
     all_variables.append("log_spfh")
     all_variables.append("log_spfh2m")
-
-    all_variables.remove("ugrd")
 
     for key in all_variables:
         submit_slurm_job(key)
