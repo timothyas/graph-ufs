@@ -24,7 +24,7 @@ class P2TrainingEmulator(FVEmulator):
         "std": "gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.fvstatistics.trop16.1993-2019/stddev_by_level.zarr",
         "stddiff": "gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.fvstatistics.trop16.1993-2019/diffs_stddev_by_level.zarr",
     }
-    local_store_path = "./local-storage"
+    local_store_path = "/p2-lustre/p2"
 
     # these could be moved to a yaml file later
     # task config options
@@ -42,7 +42,7 @@ class P2TrainingEmulator(FVEmulator):
         "spfh2m",
         "pressfc",
         # Forcing Variables at Input Time
-        "toa_incident_solar_radiation",
+        "dswrf_avetoa",
         "year_progress_sin",
         "year_progress_cos",
         "day_progress_sin",
@@ -66,7 +66,7 @@ class P2TrainingEmulator(FVEmulator):
         "pressfc",
     )
     forcing_variables = (
-        "toa_incident_solar_radiation",
+        "dswrf_avetoa",
         "year_progress_sin",
         "year_progress_cos",
         "day_progress_sin",
@@ -126,13 +126,21 @@ class P2TrainingEmulator(FVEmulator):
     # data loading options
     max_queue_size = 1
     num_workers = 1
-    dask_threads = 16
+    dask_threads = 32
 
     # hardware
     num_gpus = 1
     log_only_rank0 = False
     use_jax_distributed = False
-    use_xla_flags = False
+    use_xla_flags = True
+
+class P2PreprocessedEmulator(P2TrainingEmulator):
+    """The log transform has already been taken care of during preprocessing.
+    This version operates on transformed (preprocessed) data, so needs no transforms.
+    """
+    input_transforms = None
+    output_transforms = None
+
 
 class P2EvaluationEmulator(P2TrainingEmulator):
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
