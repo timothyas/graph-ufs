@@ -823,7 +823,7 @@ class ReplayEmulator:
                 lat = xr.open_zarr(
                     self.data_url.replace("-subsampled",""),
                     storage_options={"token":"anon"}
-                )["grid_yt"]
+                )["grid_yt"].rename({"grid_yt": "lat"})
                 lat_weights = normalized_latitude_weights(lat)
                 lat_weights = lat_weights.isel(lat=slice(None, None, 4))
             else:
