@@ -81,7 +81,7 @@ class P2TrainingEmulator(FVEmulator):
     input_duration = "6h"
     target_lead_time = "3h"
     training_dates = (
-        "1994-01-01T00",
+        "1993-12-31T18",
         "2019-12-31T18",
     )
     validation_dates = (
