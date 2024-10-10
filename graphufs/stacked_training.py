@@ -334,6 +334,13 @@ def optimize(
     progress_bar.close()
     validator.restart()
 
+    # Compute gradient avg absolute value after each epoch
+    mean_grad = np.mean(
+        tree_util.tree_flatten(
+            tree_util.tree_map(lambda x: np.abs(x).mean(), grads)
+        )[0]
+    )
+
     # save losses for each batch
     loss_ds = xr.Dataset()
     loss_fname = os.path.join(emulator.local_store_path, "loss.nc")
@@ -379,6 +386,15 @@ def optimize(
         attrs={
             "long_name": "validation loss function value",
             "description": "averaged over validation data once per epoch",
+        },
+    )
+    loss_ds["mgrad"] = xr.DataArray(
+        [mean_grad],
+        coords={"epoch": loss_ds["epoch"]},
+        dims=("epoch",),
+        attrs={
+            "long_name": "mean absolute value of loss function gradient w.r.t. parameters",
+            "description": "np.abs(x).mean() applied to grads after each epoch",
         },
     )
     loss_ds["learning_rate"] = xr.DataArray(
