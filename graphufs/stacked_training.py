@@ -294,21 +294,22 @@ def optimize(
         optim_steps.append(k)
         loss_values.append(loss)
         loss_by_channel.append(diagnostics)
+        msg = f"loss = {loss:.5f}"
+        try:
+            g_norm = opt_state[0].inner_state["g_norm"]
+            msg += f", g_norm = {g_norm:1.2e}"
+        except:
+            pass
+        gradient_norms.append(g_norm)
+
         try:
             lr = opt_state[1].hyperparams["learning_rate"]
+            msg += f", LR = {lr:.2e}"
         except:
             pass
         learning_rates.append(lr)
 
-        try:
-            g_norm = opt_state[0].inner_state["g_norm"]
-        except:
-            pass
-        gradient_norms.append(g_norm)
-        print()
-        progress_bar.set_description(
-            f"loss = {loss:.5f}, LR = {lr:.2e}, g_norm = {g_norm:1.1e}",
-        )
+        progress_bar.set_description(msg)
         progress_bar.update()
 
     progress_bar.close()
