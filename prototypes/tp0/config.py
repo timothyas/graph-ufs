@@ -66,7 +66,7 @@ class TP0Emulator(FVEmulator):
     target_lead_time = "3h"     # how long is the forecast ... at what point do we compare model to targets
     training_dates = (          # bounds of training data (inclusive)
         "1994-01-01T00",        # start
-        "1994-03-31T18"         # stop
+        "1994-01-10T18"         # stop
     )
     testing_dates = (           # bounds of testing data (inclusive)
         "1995-01-01T00",        # start
@@ -74,7 +74,7 @@ class TP0Emulator(FVEmulator):
     )
     validation_dates = (        # bounds of validation data (inclusive)
         "1996-01-01T00",        # start
-        "1996-01-31T18"         # stop
+        "1996-01-05T18"         # stop
     )
 
     # training protocol
@@ -130,6 +130,17 @@ class TP0Emulator(FVEmulator):
     use_jax_distributed = False
     use_xla_flags = False
     dask_threads = 8
+
+class BatchTester(TP0Emulator):
+    local_store_path = "clipby-batch-16"
+    batch_size = 16
+    num_epochs = 4
+
+tree_util.register_pytree_node(
+    BatchTester,
+    BatchTester._tree_flatten,
+    BatchTester._tree_unflatten
+)
 
 tree_util.register_pytree_node(
     TP0Emulator,

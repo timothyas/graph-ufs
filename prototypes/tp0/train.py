@@ -23,7 +23,37 @@ from graphufs import (
 )
 import jax
 
-from config import TP0Emulator
+#from config import TP0Emulator as Emulator
+from config import BatchTester as Emulator
+from graphufs.clipping import clip_by_global_norm
+
+def graphufs_optimizer(
+    n_linear,
+    n_total,
+    clip_value,
+    peak_value=1e-3,
+):
+
+    # define learning rate schedules
+    lr_schedule = optax.warmup_cosine_decay_schedule(
+        init_value=0.0,
+        peak_value=peak_value,
+        warmup_steps=n_linear,
+        decay_steps=n_total,
+        end_value=0.0,
+    )
+
+    # Adam optimizer
+    optimizer = optax.chain(
+        optax.inject_hyperparams(clip_by_global_norm)(clip_value),
+        optax.inject_hyperparams(optax.adamw)(
+            learning_rate=lr_schedule,
+            b1=0.9,
+            b2=0.95,
+            weight_decay=0.1,
+        ),
+    )
+    return optimizer
 
 if __name__ == "__main__":
 
@@ -34,21 +64,21 @@ if __name__ == "__main__":
     # cases, we want to compute statistics during preprocessing
     # Note we want to do this before initializing emulator object
     # since it tries to pull the statistics there.
-    stats_path = os.path.dirname(TP0Emulator.norm_urls["mean"])
+    stats_path = os.path.dirname(Emulator.norm_urls["mean"])
     if not os.path.isdir(stats_path):
         logging.info(f"Could not find {stats_path}, computing statistics...")
         fvstats = FVStatisticsComputer(
-            path_in=TP0Emulator.data_url,
+            path_in=Emulator.data_url,
             path_out=stats_path,
-            interfaces=TP0Emulator.interfaces,
+            interfaces=Emulator.interfaces,
             start_date=None,
-            end_date=TP0Emulator.training_dates[-1],
+            end_date=Emulator.training_dates[-1],
             time_skip=None,
             load_full_dataset=True,
-            transforms=TP0Emulator.input_transforms,
+            transforms=Emulator.input_transforms,
         )
         all_variables = list(set(
-            TP0Emulator.input_variables + TP0Emulator.forcing_variables + TP0Emulator.target_variables
+            Emulator.input_variables + Emulator.forcing_variables + Emulator.target_variables
         ))
         all_variables.append("log_spfh")
         all_variables.append("log_spfh2m")
@@ -56,7 +86,7 @@ if __name__ == "__main__":
 
     # We don't parse arguments since we can't be inconsistent with stats
     # computed above
-    gufs = TP0Emulator()
+    gufs = Emulator()
 
     # for multi-gpu training
     init_devices(gufs)
@@ -105,7 +135,10 @@ if __name__ == "__main__":
     opt_state = None
     logging.info("Starting Training")
 
-    optimizer = optax.adam(learning_rate=1e-4)
+    n_linear = min(10, int(len(trainer)/10))
+    n_total = gufs.num_epochs*len(trainer)
+
+    optimizer = graphufs_optimizer(n_linear=n_linear, n_total=n_total, clip_value=gufs.batch_size)
 
     # training loop
     for e in range(gufs.num_epochs):

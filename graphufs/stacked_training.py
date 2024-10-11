@@ -260,7 +260,9 @@ def optimize(
     optim_steps = []
     loss_values = []
     learning_rates = []
+    gradient_norms = []
     lr = np.nan
+    g_norm = np.nan
     loss_by_channel = []
     n_steps = len(trainer)
 
@@ -298,8 +300,14 @@ def optimize(
             pass
         learning_rates.append(lr)
 
+        try:
+            g_norm = opt_state[0].inner_state["g_norm"]
+        except:
+            pass
+        gradient_norms.append(g_norm)
+        print()
         progress_bar.set_description(
-            f"loss = {loss:.5f}, LR = {lr:.2e}",
+            f"loss = {loss:.5f}, LR = {lr:.2e}, g_norm = {g_norm:1.1e}",
         )
         progress_bar.update()
 
@@ -395,6 +403,15 @@ def optimize(
         attrs={
             "long_name": "mean absolute value of loss function gradient w.r.t. parameters",
             "description": "np.abs(x).mean() applied to grads after each epoch",
+        },
+    )
+    loss_ds["g_norm"] = xr.DataArray(
+        gradient_norms,
+        coords={"optim_step": loss_ds["optim_step"]},
+        dims=("optim_step",),
+        attrs={
+            "long_name": "global norm of gradient",
+            "description": "global gradient norm taken before clipping",
         },
     )
     loss_ds["learning_rate"] = xr.DataArray(
