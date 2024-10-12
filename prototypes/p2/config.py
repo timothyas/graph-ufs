@@ -94,8 +94,8 @@ class P2TrainingEmulator(FVEmulator):
     )
 
     # training protocol
-    batch_size = 32
-    num_epochs = 130
+    batch_size = 16
+    num_epochs = 64
 
     # model config options
     resolution = 1.0

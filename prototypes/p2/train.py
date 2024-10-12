@@ -109,7 +109,7 @@ if __name__ == "__main__":
 
     logging.info(f"Starting Training with:")
     logging.info(f"\t batch_size = {emulator.batch_size}")
-    logging.info(f"\t {len(trainer)} validation steps per epoch")
+    logging.info(f"\t {len(trainer)} training steps per epoch")
     logging.info(f"\t {len(validator)} validation steps per epoch")
     logging.info(f"\t ---")
     logging.info(f"\t {n_linear} linearly increasing LR steps")
