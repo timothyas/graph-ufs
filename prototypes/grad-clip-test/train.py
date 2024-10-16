@@ -23,33 +23,66 @@ from graphufs import (
 )
 import jax
 
-from config import TP0Emulator
-from graphufs.optim import clipped_cosine_adamw
+#from config import TP0Emulator as Emulator
+from config import BatchTester as Emulator
+from graphufs.clipping import clip_by_global_norm
 
-def calc_stats(Emulator):
+def graphufs_optimizer(
+    n_linear,
+    n_total,
+    clip_value,
+    peak_value=1e-3,
+):
+
+    # define learning rate schedules
+    lr_schedule = optax.warmup_cosine_decay_schedule(
+        init_value=0.0,
+        peak_value=peak_value,
+        warmup_steps=n_linear,
+        decay_steps=n_total,
+        end_value=0.0,
+    )
+
+    # Adam optimizer
+    optimizer = optax.chain(
+        optax.inject_hyperparams(clip_by_global_norm)(clip_value),
+        optax.inject_hyperparams(optax.adamw)(
+            learning_rate=lr_schedule,
+            b1=0.9,
+            b2=0.95,
+            weight_decay=0.1,
+        ),
+    )
+    return optimizer
+
+if __name__ == "__main__":
+
+    # logging isn't working for me on PSL, no idea why
+    setup_simple_log()
 
     # This is a bit of a hack to enable testing, for real
     # cases, we want to compute statistics during preprocessing
     # Note we want to do this before initializing emulator object
     # since it tries to pull the statistics there.
-    fvstats = FVStatisticsComputer(
-        path_in=Emulator.data_url,
-        path_out=os.path.dirname(Emulator.norm_urls["mean"]),
-        interfaces=Emulator.interfaces,
-        start_date=None,
-        end_date=Emulator.training_dates[-1],
-        time_skip=None,
-        load_full_dataset=True,
-        transforms=Emulator.input_transforms,
-    )
-    all_variables = list(set(
-        Emulator.input_variables + Emulator.forcing_variables + Emulator.target_variables
-    ))
-    all_variables.append("log_spfh")
-    all_variables.append("log_spfh2m")
-    fvstats(all_variables, integration_period=pd.Timedelta(hours=3))
-
-def train(Emulator):
+    stats_path = os.path.dirname(Emulator.norm_urls["mean"])
+    if not os.path.isdir(stats_path):
+        logging.info(f"Could not find {stats_path}, computing statistics...")
+        fvstats = FVStatisticsComputer(
+            path_in=Emulator.data_url,
+            path_out=stats_path,
+            interfaces=Emulator.interfaces,
+            start_date=None,
+            end_date=Emulator.training_dates[-1],
+            time_skip=None,
+            load_full_dataset=True,
+            transforms=Emulator.input_transforms,
+        )
+        all_variables = list(set(
+            Emulator.input_variables + Emulator.forcing_variables + Emulator.target_variables
+        ))
+        all_variables.append("log_spfh")
+        all_variables.append("log_spfh2m")
+        fvstats(all_variables, integration_period=pd.Timedelta(hours=3))
 
     # We don't parse arguments since we can't be inconsistent with stats
     # computed above
@@ -93,36 +126,23 @@ def train(Emulator):
     logging.info("Initializing Optimizer and Parameters")
     inputs, _ = trainer.get_data()
     params, state = init_model(gufs, inputs, last_input_channel_mapping)
-    gufs.save_checkpoint(params, id=0)
 
     loss_name = f"{gufs.local_store_path}/loss.nc"
     if os.path.exists(loss_name):
         os.remove(loss_name)
 
-    # setup optimizer
-    steps_in_epoch = len(trainer)
-    n_total = gufs.num_epochs * steps_in_epoch
-    n_linear = max(10, int(len(trainer)/100))
-    n_cosine = n_total - n_linear
-    optimizer = clipped_cosine_adamw(
-        n_linear=n_linear,
-        n_total=n_total,
-        peak_value=1e-3,
-    )
-
-    logging.info(f"Starting Training with:")
-    logging.info(f"\t batch_size = {gufs.batch_size}")
-    logging.info(f"\t {len(trainer)} training steps per epoch")
-    logging.info(f"\t {len(validator)} validation steps per epoch")
-    logging.info(f"\t ---")
-    logging.info(f"\t {n_linear} linearly increasing LR steps")
-    logging.info(f"\t {n_cosine} cosine decay LR steps")
-    logging.info(f"\t {n_total} total training steps")
-
     # training
     opt_state = None
+    logging.info("Starting Training")
+
+    n_linear = min(10, int(len(trainer)/10))
+    n_total = gufs.num_epochs*len(trainer)
+
+    optimizer = graphufs_optimizer(n_linear=n_linear, n_total=n_total, clip_value=gufs.batch_size)
+
+    # training loop
     for e in range(gufs.num_epochs):
-        logging.info(f"Starting epoch {e}")
+        logging.info(f"Training on epoch {e}")
 
         # optimize
         params, loss, opt_state = optimize(
@@ -137,24 +157,9 @@ def train(Emulator):
             opt_state=opt_state,
         )
 
-        logging.info(f"Done with epoch {e}")
-
         # save weights
-        gufs.save_checkpoint(params, id=e+1)
+        ckpt_id = e
+        gufs.save_checkpoint(params, ckpt_id)
 
     trainer.shutdown(cancel=True)
     validator.shutdown(cancel=True)
-
-if __name__ == "__main__":
-
-    # logging isn't working for me on PSL, no idea why
-    setup_simple_log()
-
-    stats_path = os.path.dirname(TP0Emulator.norm_urls["mean"])
-    if not os.path.isdir(stats_path):
-        logging.info(f"Could not find {stats_path}, computing statistics...")
-        calc_stats(TP0Emulator)
-
-    train(TP0Emulator)
-
-

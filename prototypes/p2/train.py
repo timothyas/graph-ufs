@@ -23,32 +23,6 @@ from config import (
     P2PreprocessedEmulator as PackedEmulator,
 )
 
-def graphufs_optimizer(
-    n_linear,
-    n_total,
-    peak_value=1e-3,
-):
-
-    # define learning rate schedules
-    lr_schedule = optax.warmup_cosine_decay_schedule(
-        init_value=0.0,
-        peak_value=peak_value,
-        warmup_steps=n_linear,
-        decay_steps=n_total,
-        end_value=0.0,
-    )
-
-    # Adam optimizer
-    optimizer = optax.chain(
-        optax.clip_by_global_norm(32),
-        optax.inject_hyperparams(optax.adamw)(
-            learning_rate=lr_schedule,
-            b1=0.9,
-            b2=0.95,
-            weight_decay=0.1,
-        ),
-    )
-    return optimizer
 
 if __name__ == "__main__":
 
