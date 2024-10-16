@@ -93,7 +93,7 @@ if __name__ == "__main__":
     # training
     opt_state = None
     for e in range(emulator.num_epochs):
-        logging.info(f"Training on epoch {e}")
+        logging.info(f"Starting epoch {e}")
 
         # optimize
         params, loss, opt_state = optimize(
@@ -109,6 +109,7 @@ if __name__ == "__main__":
         )
 
         # save weights
+        logging.info(f"Done with epoch {e}")
         emulator.save_checkpoint(params, id=e+1)
 
     logging.info("Done Training")
