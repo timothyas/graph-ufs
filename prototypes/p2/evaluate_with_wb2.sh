@@ -5,14 +5,14 @@
 output_dir=/p2-lustre/p2/inference/validation
 forecast_duration="240h"
 time_start="2022-01-01T00"
-time_stop="2022-10-02T15" #TODO: change date
+time_stop="2023-10-13T03"
 surface_variables="surface_pressure,10m_u_component_of_wind,10m_v_component_of_wind,2m_temperature"
 replay_variables="2m_specific_humidity"
 level_variables="temperature,specific_humidity,u_component_of_wind,v_component_of_wind,vertical_velocity"
 diagnosed_variables="geopotential"
 
 levels=250,500,850
-native_levels=974.296663646698,825.8226804542542,522.5402821445465,226.08772546708585
+native_levels='226.08772546708585,522.5402821445465,825.8226804542542,874.7199656200409,974.296663646698'
 
 truth_names=("era5" "hres_analysis")
 truth_paths=( \
@@ -47,7 +47,7 @@ do
           --by_init=${by_init} \
           --output_dir=${output_dir} \
           --output_file_prefix=${dataset}_vs_${truth_name}_${forecast_duration}_ \
-          --eval_configs=deterministic,deterministic_spatial,deterministic_temporal \
+          --eval_configs=deterministic,deterministic_spatial \
           --time_start=${time_start} \
           --time_stop=${time_stop} \
           --evaluate_climatology=False \
@@ -77,7 +77,7 @@ done
 echo "Comparing GraphUFS vs Replay"
 python ../../weatherbench2/scripts/evaluate.py \
   --forecast_path=${output_dir}/graphufs.${forecast_duration}.zarr \
-  --obs_path=${output_dir}/replay.${forecast_duration}.zarr \
+  --obs_path=${output_dir}/replay.vertical_regrid.zarr \
   --by_init=True \
   --output_dir=${output_dir} \
   --output_file_prefix=graphufs_vs_replay_${forecast_duration}_ \

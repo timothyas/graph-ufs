@@ -19,7 +19,6 @@ from graphufs.log import setup_simple_log
 
 from config import P2EvaluationEmulator as Emulator
 
-
 def predict(
     params,
     state,
@@ -63,19 +62,21 @@ def predict(
             forcings=forcings,
         )
 
+        # perform output transform, e.g. exp( log_spfh )
+        for key, mapping in emulator.output_transforms.items():
+            with xr.set_options(keep_attrs=True):
+                predictions[key] = mapping(predictions[key])
+
         # subsample to 6 hours
-        targets = targets.isel(time=slice(1, None, 2))
         predictions = predictions.isel(time=slice(1, None, 2))
 
         # Add t0 as new variable, and swap out for logical sample/batch index
         # swap dims to be [time (aka initial condition time), lead_time (aka forecast_time), level, lat, lon]
         predictions = swap_batch_time_dims(predictions, inittimes)
-        targets = swap_batch_time_dims(targets, inittimes)
 
         # Store to zarr one batch at a time
         if k == 0:
             store_container(pname, predictions, time=batchloader.initial_times)
-            store_container(tname, targets, time=batchloader.initial_times)
 
         # Store to zarr
         spatial_region = {k: slice(None, None) for k in predictions.dims if k != "time"}
@@ -84,7 +85,6 @@ def predict(
             **spatial_region,
         }
         predictions.to_zarr(pname, region=region)
-        targets.to_zarr(tname, region=region)
 
         progress_bar.update()
 
