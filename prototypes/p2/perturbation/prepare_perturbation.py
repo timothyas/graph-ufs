@@ -186,7 +186,7 @@ if __name__ == "__main__":
 
     setup_simple_log()
     n_members = 80
-    output_path = "perturbation.singleobs.p2.zarr"
+    output_path = "inputs.singleobs.zarr"
     rds = open_parent_dataset()
     sds = xr.open_dataset("/work2/noaa/gsienkf/timsmith/replay-grid/0.25-degree-subsampled/fv3.nc")
     for member in range(17, n_members):
@@ -206,8 +206,15 @@ if __name__ == "__main__":
             rds=rds,
         )
 
+        # handle static variables
+        static = ic0[[x for x in ic0 if "_static" in x]]
+        ic0 = ic0[[x for x in ic0 if "_static" not in x]]
+        ic1 = ic1[[x for x in ic0 if "_static" not in x]]
+
         xds = xr.concat([ic0, ic1], dim="datetime")
         xds = xds.expand_dims({"member": [member]})
+        for key in static.data_vars:
+            xds[key] = static[key]
 
         # check with subsampled grid
         np.testing.assert_allclose(xds.grid_yt.values, sds.grid_yt.values)

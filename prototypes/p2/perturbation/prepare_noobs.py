@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     setup_simple_log()
     n_members = 80
-    output_path = "perturbation.noobs.p2.zarr"
+    output_path = "inputs.noobs.zarr"
     rds = open_parent_dataset()
     sds = xr.open_dataset("/work2/noaa/gsienkf/timsmith/replay-grid/0.25-degree-subsampled/fv3.nc")
     for member in range(2, n_members):

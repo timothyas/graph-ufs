@@ -21,19 +21,19 @@ def swap_batch_time_dims(xds, inittimes):
     return xds
 
 
-def store_container(path, xds, time, **kwargs):
+def store_container(path, xds, chunked_dim_values, chunked_dim_name="time", **kwargs):
 
-    if "time" in xds:
-        xds = xds.isel(time=0, drop=True)
+    if chunked_dim_name in xds:
+        xds = xds.isel({chunked_dim_name:0}, drop=True)
 
     container = xr.Dataset()
     for key in xds.coords:
         container[key] = xds[key].copy()
 
     for key in xds.data_vars:
-        dims = ("time",) + xds[key].dims
-        coords = {"time": time, **dict(xds[key].coords)}
-        shape = (len(time),) + xds[key].shape
+        dims = (chunked_dim_name,) + xds[key].dims
+        coords = {chunked_dim_name: chunked_dim_values, **dict(xds[key].coords)}
+        shape = (len(chunked_dim_values),) + xds[key].shape
         chunks = (1,) + tuple(-1 for _ in xds[key].dims)
 
         container[key] = xr.DataArray(
