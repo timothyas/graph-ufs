@@ -186,7 +186,8 @@ if __name__ == "__main__":
 
     setup_simple_log()
     n_members = 80
-    output_path = "inputs.singleobs.zarr"
+    output_common = f"{Emulator.local_store_path}/inputs.common.zarr"
+    output_path = f"{Emulator.local_store_path}/inputs.singleobs.zarr"
     rds = open_parent_dataset()
     sds = xr.open_dataset("/work2/noaa/gsienkf/timsmith/replay-grid/0.25-degree-subsampled/fv3.nc")
     for member in range(17, n_members):
@@ -205,24 +206,19 @@ if __name__ == "__main__":
             is_sanl=True,
             rds=rds,
         )
+        for xds, path in zip(
+            [ic0, ic1],
+            [output_common, output_path],
+        ):
+            xds = xds.expand_dims({"member": [member]})
 
-        # handle static variables
-        static = ic0[[x for x in ic0 if "_static" in x]]
-        ic0 = ic0[[x for x in ic0 if "_static" not in x]]
-        ic1 = ic1[[x for x in ic0 if "_static" not in x]]
+            # check with subsampled grid
+            np.testing.assert_allclose(xds.grid_yt.values, sds.grid_yt.values)
+            np.testing.assert_allclose(xds.grid_xt.values, sds.grid_xt.values)
+            if member == 0:
+                store_container(path, xds, members=np.arange(n_members))
 
-        xds = xr.concat([ic0, ic1], dim="datetime")
-        xds = xds.expand_dims({"member": [member]})
-        for key in static.data_vars:
-            xds[key] = static[key]
-
-        # check with subsampled grid
-        np.testing.assert_allclose(xds.grid_yt.values, sds.grid_yt.values)
-        np.testing.assert_allclose(xds.grid_xt.values, sds.grid_xt.values)
-        if member == 0:
-            store_container(output_path, xds, members=np.arange(n_members))
-
-        region = {k: slice(None, None) for k in xds.dims}
-        region["member"] = slice(member, member+1)
-        xds.to_zarr(output_path, region=region)
-        logging.info(f"Done with {member} / {n_members}")
+            region = {k: slice(None, None) for k in xds.dims}
+            region["member"] = slice(member, member+1)
+            xds.to_zarr(path, region=region)
+            logging.info(f"Done with {member} / {n_members}")

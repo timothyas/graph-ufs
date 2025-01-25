@@ -13,20 +13,46 @@ from tqdm import tqdm
 from graphcast import rollout, solar_radiation, data_utils
 
 from graphufs.training import construct_wrapped_graphcast
-from graphufs.batchloader import ExpandedBatchLoader
-from graphufs.datasets import Dataset
-from graphufs.inference import swap_batch_time_dims, store_container
 from graphufs.log import setup_simple_log
 
 from config import P2EvaluationEmulator as Emulator
 
 _lead_times = ["3h", "6h"]
-_grid_ncfile = "/work2/noaa/gsienkf/timsmith/replay-grid/0.25-degree-subsampled/fv3.nc"
+_grid_ncfile = "gs://noaa-ufs-gefsv13replay/ufs-hr1/0.25-degree-subsampled/03h-freq/zarr/fv3.zarr"
 _rename = {
     "pfull": "level",
     "grid_yt": "lat",
     "grid_xt": "lon",
 }
+
+
+def store_container(path, xds, chunked_dim_values, chunked_dim_name="time", **kwargs):
+
+    if chunked_dim_name in xds:
+        xds = xds.isel({chunked_dim_name:0}, drop=True)
+
+    container = xr.Dataset()
+    for key in xds.coords:
+        container[key] = xds[key].copy()
+
+    for key in xds.data_vars:
+        dims = (chunked_dim_name,) + xds[key].dims
+        coords = {chunked_dim_name: chunked_dim_values, **dict(xds[key].coords)}
+        shape = (len(chunked_dim_values),) + xds[key].shape
+        chunks = (1,) + tuple(-1 for _ in xds[key].dims)
+
+        container[key] = xr.DataArray(
+            data=dask.array.zeros(
+                shape=shape,
+                chunks=chunks,
+                dtype=xds[key].dtype,
+            ),
+            coords=coords,
+            dims=dims,
+            attrs=xds[key].attrs.copy(),
+        )
+    container.to_zarr(path, compute=False, **kwargs)
+    logging.info(f"Stored container at {path}")
 
 def rename2graphcast(xds):
     for key, val in _rename.items():
@@ -67,7 +93,7 @@ def get_forcings(last_ic_datetime, lead_times):
     """
 
     # open the grid
-    gds = xr.open_dataset(_grid_ncfile)
+    gds = xr.open_zarr(_grid_ncfile)
     gds = rename2graphcast(gds)
 
     # setup container for the forcings
@@ -163,7 +189,7 @@ def predict(
     tds = tds.rename(m2b)
     all_inputs = all_inputs.rename(m2b)
 
-    pname = f"inference.{prefix}.zarr"
+    pname = f"{emulator.local_store_path}/perturbation/inference.{prefix}.zarr"
     progress_bar = tqdm(total=len(all_inputs["batch"]), ncols=80, desc="Processing")
     for member in all_inputs["batch"].values:
 
@@ -267,5 +293,5 @@ if __name__ == "__main__":
             tds=tds,
             ic0=ic0,
             emulator=emulator,
-            prefix="noobs",
+            prefix=prefix,
         )
