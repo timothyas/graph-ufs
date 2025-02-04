@@ -2,6 +2,7 @@
 Implementations of Torch Dataset and DataLoader
 """
 from os.path import join
+import logging
 from typing import Optional
 import numpy as np
 import xarray as xr
@@ -9,7 +10,6 @@ import dask.array
 
 from xbatcher import BatchGenerator
 
-from graphcast.data_utils import extract_inputs_targets_forcings
 from graphcast.model_utils import dataset_to_stacked
 
 from .emulator import ReplayEmulator
@@ -18,6 +18,8 @@ class Dataset():
     """
     Dataset for Replay Data, in the style of pytorch, but does not require torch
     """
+    possible_stacked_dims = ("batch", "member", "lat", "lon", "channels")
+
     def __init__(
         self,
         emulator: ReplayEmulator,
@@ -41,17 +43,21 @@ class Dataset():
         self.input_chunks = input_chunks
         self.target_chunks = target_chunks
         xds = self._open_dataset()
+
+        print(xds)
+        self.stacked_dims = tuple(x for x in self.possible_stacked_dims if x in xds.dims or x in ("batch", "channels"))
+        self.preserved_dims = self.stacked_dims[:-1]
+
+        print(self.emulator.input_dims)
+        print(self.emulator.input_overlap)
+        print(self.stacked_dims)
+        print(self.preserved_dims)
+
+
         self.sample_generator = BatchGenerator(
             ds=xds,
-            input_dims={
-                "datetime": emulator.n_forecast,
-                "lon": len(xds["lon"]),
-                "lat": len(xds["lat"]),
-                "level": len(xds["level"]),
-            },
-            input_overlap={
-                "datetime": emulator.n_forecast-1,
-            },
+            input_dims=self.emulator.input_dims,
+            input_overlap=self.emulator.input_overlap,
             preload_batch=preload_batch,
         )
 
@@ -79,8 +85,10 @@ class Dataset():
         else:
             sample_input, sample_target, sample_forcing = self.get_batch_of_xarrays(idx)
 
+        print(f"__getitem__: {idx}\n{sample_input}\n{sample_target}\n{sample_forcing}")
         x = self._stack(sample_input, sample_forcing)
         y = self._stack(sample_target)
+        print(f"__getitem:\n{x.shape}\n{y.shape}")
         return x, y
 
 
@@ -105,11 +113,10 @@ class Dataset():
     @property
     def initial_times(self) -> list[np.datetime64]:
         """Returns dates of all initial conditions"""
-        return [self.xds["datetime"].values[i + self.emulator.n_input - 1] for i in range(len(self))]
+        return [self.xds["time"].values[i + self.emulator.n_input - 1] for i in range(len(self))]
 
 
-    @staticmethod
-    def _stack(a: xr.DataArray, b: Optional[xr.DataArray] = None) -> xr.DataArray:
+    def _stack(self, a: xr.DataArray, b: Optional[xr.DataArray] = None) -> xr.DataArray:
         """
         Stack xarrays to form input tensors.
 
@@ -120,13 +127,13 @@ class Dataset():
         Returns:
             result (xarray.DataArray): Stacked xarray.
         """
-        result = dataset_to_stacked(a)
+        result = dataset_to_stacked(a, preserved_dims=tuple(d for d in self.preserved_dims if d in a))
         if b is not None:
             result = xr.concat(
-                [result, dataset_to_stacked(b)],
+                [result, dataset_to_stacked(b, preserved_dims=tuple(d for d in self.preserved_dims if d in b))],
                 dim="channels",
             )
-        result = result.transpose("batch", "lat", "lon", "channels")
+        result = result.transpose(*self.stacked_dims)
         return result
 
     def _open_dataset(self) -> xr.Dataset:
@@ -140,43 +147,11 @@ class Dataset():
         time = self.emulator.get_time(mode=self.mode)
         xds = self.emulator.subsample_dataset(xds, new_time=time)
         xds = self.emulator.check_for_ints(xds)
-        xds = xds.rename({
-            "time": "datetime",
-            "pfull": "level",
-            "grid_yt": "lat",
-            "grid_xt": "lon",
-        })
-        xds = xds.drop_vars(["cftime", "ftime"])
+        xds = xds.rename({val: key for key, val in self.emulator.dim_names.items() if val in xds})
+        for key in ["cftime", "ftime"]:
+            if key in xds:
+                xds = xds.drop_vars(key)
         return xds
-
-    def _preprocess(self, xds: xr.Dataset) -> xr.Dataset:
-        """
-        Preprocess the xarray dataset as necessary for GraphCast.
-
-        Args:
-            xds (xarray.Dataset): Input xarray dataset.
-
-        Returns:
-            xds (xarray.Dataset): Preprocessed xarray dataset.
-        """
-        xds["time"] = xds["datetime"] - xds["datetime"][0]
-        xds = xds.swap_dims({"datetime": "time"}).reset_coords()
-        xds = xds.set_coords(["datetime"])
-        return xds
-
-    def get_xds(self, idx: int) -> xr.Dataset:
-        """
-        Get a single dataset used to create inputs, targets, forcings for this sample index
-
-        Args:
-            idx (int): Index of the sample.
-
-        Returns:
-            xds (xarray.Dataset): Preprocessed xarray dataset.
-        """
-        sample = self.sample_generator[idx]
-        sample = self._preprocess(sample)
-        return sample
 
     def get_xarrays(self, idx: int) -> tuple:
         """
@@ -188,12 +163,11 @@ class Dataset():
         Returns:
             xinput, xtarget, xforcing (xarray.DataArray): as from graphcast.data_utils.extract_inputs_targets_forcings
         """
-        sample = self.get_xds(idx)
+        sample = self.sample_generator[idx]
 
-        xinput, xtarget, xforcing = extract_inputs_targets_forcings(
+        xinput, xtarget, xforcing = self.emulator.extract_inputs_targets_forcings(
             sample,
             drop_datetime=False,
-            **self.emulator.extract_kwargs,
         )
         xinput = xinput.expand_dims({"batch": [idx]})
         xtarget = xtarget.expand_dims({"batch": [idx]})
@@ -256,7 +230,7 @@ class Dataset():
 
         xds = xr.Dataset()
         xds["sample"] = np.arange(len(self))
-        for key in ["lat", "lon", "channels"]:
+        for key in self.stacked_dims[1:]:
             xds[key] = template[key].copy()
 
         dims = ("sample",) + template.dims

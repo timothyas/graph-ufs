@@ -137,6 +137,13 @@ class ReplayEmulator:
     # for stacked graphcast
     last_input_channel_mapping = None
 
+    dim_names = {
+        "time": "time",
+        "level": "pfull",
+        "lat": "grid_yt",
+        "lon": "grid_xt",
+    }
+
     def __init__(self, mpi_rank=None, mpi_size=None):
 
         if self.local_store_path is None:
@@ -251,6 +258,34 @@ class ReplayEmulator:
         kw["integration_period"] = self.tisr_integration_period
         return kw
 
+    def extract_inputs_targets_forcings(self, sample, **kwargs):
+
+        # this used to be Dataset._preprocess, but it's unique to each type of emulator
+        sample = sample.rename({"time": "datetime"})
+        sample["time"] = sample["datetime"] - sample["datetime"][0]
+        sample = sample.swap_dims({"datetime": "time"}).reset_coords()
+        sample = sample.set_coords(["datetime"])
+        return data_utils.extract_inputs_targets_forcings(
+            sample,
+            **self.extract_kwargs,
+            **kwargs,
+        )
+
+    @property
+    def input_dims(self):
+        return {
+            "time": self.n_forecast,
+            "lat": len(self.latitude),
+            "lon": len(self.longitude),
+            "level": len(self.pressure_levels),
+        }
+
+    @property
+    def input_overlap(self):
+        return {
+            "time": self.n_forecast-1,
+        }
+
     @property
     def local_data_path(self):
         return os.path.join(self.local_store_path, "data.zarr")
@@ -307,10 +342,10 @@ class ReplayEmulator:
         xds = xds[myvars]
 
         if new_time is not None:
-            xds = xds.sel(time=new_time)
+            xds = xds.sel({self.dim_names["time"]: new_time})
 
         # select our vertical levels
-        xds = xds.sel(pfull=self.levels)
+        xds = xds.sel({self.dim_names["level"]: self.levels})
 
         # if we have any transforms to apply, do it here
         xds = self.transform_variables(xds)
@@ -633,10 +668,7 @@ class ReplayEmulator:
                         batch_index=b,
                     )
 
-                    this_input, this_target, this_forcing = data_utils.extract_inputs_targets_forcings(
-                        batch,
-                        **self.extract_kwargs,
-                    )
+                    this_input, this_target, this_forcing = self.extract_inputs_targets_forcings(batch)
 
                     # note that the optim_step dim has to be added after the extract_inputs_targets_forcings call
                     inputs.append(this_input.expand_dims({"optim_step": [k]}))
@@ -733,9 +765,9 @@ class ReplayEmulator:
 
                             # necessary for graphcast.dataset to stacked operations
                             xds = xds.rename({transformed_key: key})
-                    xds = xds.sel(pfull=self.levels)
+                    xds = xds.sel({self.dim_names["level"]: self.levels})
                     xds = xds.load()
-                    xds = xds.rename({"pfull": "level"})
+                    xds = xds.rename({self.dim_names["level"]: "level"})
 
                 xds.to_zarr(local_path)
             return xds
