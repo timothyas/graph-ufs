@@ -2,7 +2,6 @@
 Implementations of Torch Dataset and DataLoader
 """
 from os.path import join
-import logging
 from typing import Optional
 import numpy as np
 import xarray as xr
@@ -44,15 +43,8 @@ class Dataset():
         self.target_chunks = target_chunks
         xds = self._open_dataset()
 
-        print(xds)
         self.stacked_dims = tuple(x for x in self.possible_stacked_dims if x in xds.dims or x in ("batch", "channels"))
         self.preserved_dims = self.stacked_dims[:-1]
-
-        print(self.emulator.input_dims)
-        print(self.emulator.input_overlap)
-        print(self.stacked_dims)
-        print(self.preserved_dims)
-
 
         self.sample_generator = BatchGenerator(
             ds=xds,
@@ -85,10 +77,8 @@ class Dataset():
         else:
             sample_input, sample_target, sample_forcing = self.get_batch_of_xarrays(idx)
 
-        print(f"__getitem__: {idx}\n{sample_input}\n{sample_target}\n{sample_forcing}")
         x = self._stack(sample_input, sample_forcing)
         y = self._stack(sample_target)
-        print(f"__getitem:\n{x.shape}\n{y.shape}")
         return x, y
 
 
