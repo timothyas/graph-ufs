@@ -22,8 +22,6 @@ class StatisticsComputer:
         to_zarr_kwargs (dict): Keyword arguments for saving to zarr.
         load_full_dataset (bool): Whether to load the full dataset.
     """
-    dims = ("time", "grid_yt", "grid_xt")
-
     @property
     def name(self):
         return str(type(self).__name__)
@@ -40,6 +38,9 @@ class StatisticsComputer:
         to_zarr_kwargs: Optional[dict] = None,
         load_full_dataset: Optional[bool] = False,
         transforms: Optional[dict] = None,
+        dims=("time", "lat", "lon"),
+        delta_t="3h",
+        rename=None,
     ):
         """Initializes StatisticsComputer with specified attributes.
 
@@ -53,6 +54,10 @@ class StatisticsComputer:
             to_zarr_kwargs (dict, optional): Keyword arguments for saving to zarr.
             load_full_dataset (bool, optional): Whether to load the full dataset.
             transforms (dict, optional): with a mapping from {variable_name : operation} e.g. {"spfh": np.log}
+            rename (dict, optional): use this to rename, at a minimum:
+                "vertical coordinate": "level",
+                "latitude_name": "lat",
+                "longitude_name": "lon",
         """
         self.path_in = path_in
         self.path_out = path_out
@@ -63,17 +68,15 @@ class StatisticsComputer:
         self.open_zarr_kwargs = open_zarr_kwargs if open_zarr_kwargs is not None else dict()
         self.to_zarr_kwargs = to_zarr_kwargs if to_zarr_kwargs is not None else dict()
         self.load_full_dataset = load_full_dataset
-        if self.comp.lower() == "atm".lower():
-            self.delta_t = f"{self.time_skip*3} hour" if self.time_skip is not None else "3 hour"
-            self.dims = ("time", "grid_yt", "grid_xt")
-        elif self.comp.lower() == "ocean".lower():
-            self.delta_t = f"{self.time_skip*6} hour" if self.time_skip is not None else "6 hour"
-            self.dims = ("time", "lat", "lon")
-        else:
-            raise ValueError("component can only be atm or ocean")
         self.transforms = transforms
 
-        self.delta_t = f"{self.time_skip*3} hour" if self.time_skip is not None else "3 hour"
+        self.dims = dims
+        self.delta_t = delta_t
+        self.rename = rename
+
+        if time_skip is not None:
+            raise NotImplementedError("Will have trouble now that delta_t is a parameter...")
+
 
     def __call__(self, data_vars=None, diagnostics=None, **tisr_kwargs):
         """Processes the input dataset to compute normalization statistics.
@@ -89,7 +92,6 @@ class StatisticsComputer:
         ds = self.open_dataset(data_vars=data_vars, diagnostics=diagnostics, **tisr_kwargs)
         self._transforms_warning(list(ds.data_vars.keys()))
         localtime.stop()
-
 
         logging.info(f"{self.name}: computing statistics for {data_vars}")
         if diagnostics is not None:
@@ -119,10 +121,15 @@ class StatisticsComputer:
 
     def open_dataset(self, data_vars=None, diagnostics=None, **tisr_kwargs):
         xds = xr.open_zarr(self.path_in, **self.open_zarr_kwargs)
+        if self.rename is not None:
+            xds = xds.rename(self.rename)
 
         # subsample in time
         if "time" in xds.dims:
             xds = self.subsample_time(xds)
+
+        if isinstance(data_vars, str):
+            data_vars = [data_vars]
 
         logging.info(f"{self.name}: Adding any derived variables")
         xds = add_derived_vars(
@@ -130,6 +137,10 @@ class StatisticsComputer:
             compute_tisr=data_utils.TISR in data_vars if data_vars is not None else False,
             **tisr_kwargs,
         )
+
+        # select variables
+        if data_vars is not None:
+            xds = xds[data_vars]
 
         logging.info(f"{self.name}: Adding any transformed variables")
         xds = add_transformed_vars(
@@ -249,6 +260,10 @@ class StatisticsComputer:
             self.path_out,
             "mean_by_level.zarr",
         )
+        if self.rename is not None:
+            for key, val in self.rename.items():
+                if val in result:
+                    result = result.rename({val: key})
         result.to_zarr(this_path_out, **self.to_zarr_kwargs)
         logging.info(f"Stored result: {this_path_out}")
         return result
@@ -324,22 +339,18 @@ def add_derived_vars(
         xds (xr.Dataset): with added variables
     """
     with xr.set_options(keep_attrs=True):
-        if component.lower() == "atm".lower():
-            xds = xds.rename({"time": "datetime", "grid_xt": "lon", "grid_yt": "lat", "pfull": "level"})
-            data_utils.add_derived_vars(xds)
-            if compute_tisr:
-                logging.info(f"Computing {data_utils.TISR}")
-                xds[data_utils.TISR] = solar_radiation.get_toa_incident_solar_radiation_for_xarray(
-                    xds,
-                    **tisr_kwargs
-                )
-            xds = xds.rename({"datetime": "time", "lon": "grid_xt", "lat": "grid_yt", "level": "pfull"})
+        logging.warning("graphufs.statistics.derived_vars: renaming valid_time -> datetime, but need to code this as maybe time, maybe time depending on the dataset")
+        xds = xds.rename({"valid_time": "datetime"})
+        xds.datetime.load()
+        data_utils.add_derived_vars(xds)
+        if compute_tisr:
+            logging.info(f"Computing {data_utils.TISR}")
+            xds[data_utils.TISR] = solar_radiation.get_toa_incident_solar_radiation_for_xarray(
+                data_array_like=xds if "fhr" not in xds else xds.sel(fhr=0),
+                **tisr_kwargs
+            )
 
-        elif component.lower() == "ocean".lower():
-            xds = xds.rename({"time": "datetime"})
-            data_utils.add_derived_vars(xds)
-            xds = xds.rename({"datetime": "time"})
-
+        xds = xds.rename({"datetime": "valid_time"})
     return xds
 
 def add_transformed_vars(

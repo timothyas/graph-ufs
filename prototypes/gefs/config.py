@@ -5,9 +5,6 @@ import numpy as np
 
 from graphufs.gefs import GEFSEmulator as BaseGEFSEmulator
 
-
-local_path = os.path.dirname(os.path.realpath(__file__))
-
 def log(xda):
     cond = xda > 0
     return xr.where(
@@ -19,16 +16,18 @@ def log(xda):
 def exp(xda):
     return np.exp(xda)
 
+_scratch = "/pscratch/sd/t/timothys/gefs/one-degree"
+
 class GEFSEmulator(BaseGEFSEmulator):
 
-    data_url = "/home/tsmith/work/ufs2arco/examples/gefs/sample-gefs.zarr"
+    data_url = f"{_scratch}/forecasts.zarr"
     norm_urls = {
-        "mean": f"{local_path}/fv3.fvstatistics.1994/mean_by_level.zarr",
-        "std": f"{local_path}/fv3.fvstatistics.1994/stddev_by_level.zarr",
-        "stddiff": f"{local_path}/fv3.fvstatistics.1994/diffs_stddev_by_level.zarr",
+        "mean": f"{_scratch}/statistics/mean_by_level.zarr",
+        "std": f"{_scratch}/statistics/stddev_by_level.zarr",
+        "stddiff": f"{_scratch}/statistics/diffs_stddev_by_level.zarr",
     }
 
-    local_store_path = "./dp0"
+    local_store_path = None
 
     # these could be moved to a yaml file later
     # task config options
@@ -76,23 +75,23 @@ class GEFSEmulator(BaseGEFSEmulator):
         "day_progress_sin",
         "day_progress_cos",
     )
-    pressure_levels = (500, 800, 1000)
+    pressure_levels = (100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000)
 
     # time related
-    delta_t = "6h"              # the model time step
-    input_duration = "6h"      # time covered by initial condition(s) + delta_t (necessary for GraphCast code)
-    target_lead_time = "6h"     # how long is the forecast ... at what point do we compare model to targets
-    training_dates = (          # bounds of training data (inclusive)
-        "2017-01-01T00",        # start
-        "2017-01-06T18"         # stop
+    delta_t = "6h"
+    input_duration = "6h"
+    target_lead_time = "6h"
+    training_dates = (
+        "2017-01-01T00",
+        "2019-06-30T18"
     )
-    testing_dates = (           # bounds of testing data (inclusive)
-        "2017-01-01T00",        # start
-        "2017-01-05T18"         # stop
+    validation_dates = (
+        "2019-07-01T00",
+        "2019-12-31T18"
     )
-    validation_dates = (        # bounds of validation data (inclusive)
-        "2017-01-01T00",        # start
-        "2017-01-05T18"         # stop
+    testing_dates = (
+        "2020-01-01T00",
+        "2020-09-23T06"
     )
 
     # training protocol
@@ -101,16 +100,16 @@ class GEFSEmulator(BaseGEFSEmulator):
 
     # model config options
     resolution = 1.0
-    mesh_size = 2
-    latent_size = 256
-    gnn_msg_steps = 4
+    mesh_size = 5
+    latent_size = 512
+    gnn_msg_steps = 16
     hidden_layers = 1
     radius_query_fraction_edge_length = 0.6
 
-    # loss weighting, defaults to GraphCast implementation
+    # loss weighting
+    weight_loss_per_channel = True
     weight_loss_per_latitude = True
     weight_loss_per_level = False
-    weight_loss_per_channel = True
     loss_weights_per_variable = dict()
     input_transforms = {
         "q": log,
@@ -126,11 +125,9 @@ class GEFSEmulator(BaseGEFSEmulator):
     init_rng_seed = 0
     training_batch_rng_seed = 100
 
-    # data chunking options
+    # data loading options
     max_queue_size = 1
     num_workers = 1
-    dask_threads = 8
-    num_gpus = 1
 
 tree_util.register_pytree_node(
     GEFSEmulator,
