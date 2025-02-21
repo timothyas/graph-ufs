@@ -4,7 +4,7 @@ import xarray as xr
 import pandas as pd
 from jax import tree_util
 
-from graphcast import data_utils
+from graphcast import data_utils, solar_radiation
 from graphcast.graphcast import ModelConfig, TaskConfig, CheckPoint
 
 from .emulator import ReplayEmulator
@@ -132,8 +132,18 @@ class GEFSEmulator(ReplayEmulator):
         # forcings are actually tricky... since we want to compute them as a function of valid_time
         if set(self.forcing_variables) & data_utils._DERIVED_VARS:
             data_utils.add_derived_vars(sample)
-        if set(self.forcing_variables) & {data_utils.TISR}:
-            data_utils.add_tisr_var(sample, **tisr_kwargs)
+        if "toa_incident_solar_radiation" in self.all_variables:
+            tisr = xr.concat(
+                [
+                    solar_radiation.get_toa_incident_solar_radiation_for_xarray(
+                        data_array_like=sample.sel(fhr=fhr),
+                        **tisr_kwargs,
+                    ).expand_dims({"fhr": [fhr]})
+                    for fhr in sample.fhr.values
+                ],
+                dim="fhr",
+            )
+            sample["toa_incident_solar_radiation"] = tisr
 
         if drop_datetime:
             sample = sample.drop_vars("datetime")
@@ -170,7 +180,7 @@ class GEFSEmulator(ReplayEmulator):
     def _get_gefs_grid(self, resolution: int | float):
         if int(resolution) != 1:
             raise NotImplementedError
-        latitude = np.arange(90, -91, -1).astype(float)
+        latitude = np.arange(89, -90, -1).astype(float)
         longitude = np.arange(360).astype(float)
         pressure = np.array(
             [
@@ -184,7 +194,9 @@ class GEFSEmulator(ReplayEmulator):
         return pressure, latitude, longitude
 
     def open_dataset(self, **kwargs):
-        return xr.open_zarr(self.data_url, **kwargs)
+        xds = xr.open_zarr(self.data_url, **kwargs)
+        xds = xds.sel(latitude=slice(89.5, -89.5))
+        return xds
 
 
     # Want to make it clear I don't know what will happen with these routines
