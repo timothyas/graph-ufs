@@ -47,15 +47,22 @@ def submit_slurm_job(name, varlist):
         if not os.path.isdir(d):
             os.makedirs(d)
 
-    time = "00:30:00" #"06:00:00" if name == "surface" else "12:00:00"
+    if name == "surface":
+        time = "06:00:00"
+        n_tasks = 6
+
+    else:
+        time = "12:00:00"
+        n_tasks = 3
+
     jobscript = f"#!/bin/bash\n\n"+\
         f"#SBATCH -J {name}_stats\n"+\
         f"#SBATCH -o {logdir}/{name}.%j.out\n"+\
         f"#SBATCH -e {logdir}/{name}.%j.err\n"+\
         f"#SBATCH --nodes=1\n"+\
-        f"#SBATCH --ntasks=6\n"+\
+        f"#SBATCH --ntasks={n_tasks}\n"+\
         f"#SBATCH --cpus-per-task=30\n"+\
-        f"#SBATCH --qos=debug\n"+\
+        f"#SBATCH --qos=regular\n"+\
         f"#SBATCH --account=m4718\n"+\
         f"#SBATCH --constraint=cpu\n"+\
         f"#SBATCH -t {time}\n\n"+\
