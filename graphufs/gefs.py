@@ -113,9 +113,8 @@ class GEFSEmulator(ReplayEmulator):
         self.norm_urls = self.norm_urls.copy()
         self.norm = dict()
         self.stacked_norm = dict()
-        print("Ignoring normalization for now")
-        #self.set_normalization()
-        #self.set_stacked_normalization()
+        self.set_normalization()
+        self.set_stacked_normalization()
 
         # TOA Incident Solar Radiation integration period
         if self.tisr_integration_period is None:

@@ -199,6 +199,10 @@ class StatisticsComputer:
             self.path_out,
             "diffs_stddev_by_level.zarr",
         )
+        if self.rename is not None:
+            for key, val in self.rename.items():
+                if val in result:
+                    result = result.rename({val: key})
         result.to_zarr(this_path_out, **self.to_zarr_kwargs)
         logging.info(f"Stored result: {this_path_out}")
         return result
@@ -227,6 +231,10 @@ class StatisticsComputer:
             self.path_out,
             "stddev_by_level.zarr",
         )
+        if self.rename is not None:
+            for key, val in self.rename.items():
+                if val in result:
+                    result = result.rename({val: key})
         result.to_zarr(this_path_out, **self.to_zarr_kwargs)
         logging.info(f"Stored result: {this_path_out}")
         return result
