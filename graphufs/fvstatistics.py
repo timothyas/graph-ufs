@@ -7,6 +7,7 @@ import xarray as xr
 
 from graphcast import data_utils
 
+from .diagnostics import prepare_diagnostic_functions
 from .fvemulator import fv_vertical_regrid
 from .statistics import StatisticsComputer, add_derived_vars, add_transformed_vars
 
@@ -54,7 +55,7 @@ class FVStatisticsComputer(StatisticsComputer):
         )
         self.interfaces = interfaces
 
-    def open_dataset(self, data_vars=None, **tisr_kwargs):
+    def open_dataset(self, data_vars=None, diagnostics=None, **tisr_kwargs):
         xds = xr.open_zarr(self.path_in, **self.open_zarr_kwargs)
 
         # subsample in time
@@ -68,7 +69,16 @@ class FVStatisticsComputer(StatisticsComputer):
             **tisr_kwargs,
         )
 
+        if diagnostics is not None:
+            if isinstance(diagnostics, str):
+                diagnostics = [diagnostics]
+            diagnostic_mappings = prepare_diagnostic_functions(diagnostics)
+
         # select variables, keeping delz
+        # note that all of this complicated logic is because we want to regrid before computing
+        # transformations and diagnostics, but we don't want to create the regridding task graph
+        # for ALL the variables in the dataset (which would be the case if we simply grabbed the variables
+        # after transformations/diagnostics), because that could be HUUUUGE
         if data_vars is not None:
             local_data_vars = copy(data_vars)
             if isinstance(data_vars, str):
@@ -87,13 +97,22 @@ class FVStatisticsComputer(StatisticsComputer):
                 if do_transformed_var and original_var_not_in_list:
                     local_data_vars.append(key)
 
+            # now if we want diagnostics, make sure the required variables are there
+            if diagnostics is not None:
+                for key, required_variables in diagnostic_mappings["required_variables"].items():
+                    do_this_diagnostic = any(key == dv for dv in diagnostics)
+                    if do_this_diagnostic:
+                        for required_var in required_variables:
+                            if required_var not in local_data_vars:
+                                local_data_vars.append(required_var)
+
             if "pfull" in xds[local_data_vars].dims:
                 xds = xds[local_data_vars+["delz"]]
             else:
                 xds = xds[local_data_vars]
 
         # regrid in the vertical
-        if "pfull" in xds[local_data_vars].dims:
+        if "pfull" in xds.dims:
             logging.info(f"{self.name}: starting vertical regridding")
             xds = fv_vertical_regrid(xds, interfaces=list(self.interfaces))
 
@@ -103,8 +122,14 @@ class FVStatisticsComputer(StatisticsComputer):
             transforms=self.transforms,
         )
 
+        if diagnostics is not None:
+            logging.info(f"{self.name}: computing diagnostics {diagnostics}")
+            for key, func in diagnostic_mappings["functions"].items():
+                xds[key] = func(xds)
+
+
         if data_vars is not None:
-            selvars = data_vars
+            selvars = data_vars + list(diagnostics) if diagnostics is not None else data_vars
             for key in ["phalf", "ak", "bk"]:
                 if key in xds:
                     selvars.append(key)

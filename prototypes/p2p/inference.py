@@ -16,6 +16,8 @@ from graphufs.batchloader import MPIExpandedBatchLoader
 from graphufs.datasets import Dataset
 from graphufs.inference import swap_batch_time_dims, store_container
 from graphufs.mpi import MPITopology
+from graphufs import diagnostics
+from graphufs import fvemulator
 
 def predict(
     params,
@@ -43,6 +45,12 @@ def predict(
     hours = int(emulator.forecast_duration.value / 1e9 / 3600)
     pname = f"{emulator.local_store_path}/inference/{batchloader.dataset.mode}/graphufs.{hours}h.zarr"
     tname = f"{emulator.local_store_path}/inference/{batchloader.dataset.mode}/replay.{hours}h.zarr"
+
+    # prepare diagnostics if desired
+    diagnostic_mappings = dict()
+    if emulator.diagnostics is not None:
+        diagnostic_mappings = diagnostics.prepare_diagnostic_functions(emulator.diagnostics)
+
 
     n_steps = len(batchloader)
     with open(mpi_topo.progress_file, "a") as f:
@@ -75,6 +83,32 @@ def predict(
                 predictions = predictions.isel(time=slice(1, None, 2))
                 targets = targets.isel(time=slice(1, None, 2))
 
+                # compute diagnostics if desired
+                for key, func in diagnostic_mappings["functions"].items():
+                    if "ak" not in predictions.data_vars or "ak" not in predictions.coords:
+                        cds = fvemulator.get_new_vertical_grid(list(emulator.interfaces))
+                        for k2 in ["ak", "bk"]:
+                            predictions[k2] = cds[k2]
+                            targets[k2] = cds[k2]
+                            predictions = predictions.set_coords(k2)
+                            targets = targets.set_coords(k2)
+
+                    for var in diagnostic_mappings["required_variables"][key]:
+                        if var not in predictions.data_vars:
+                            if var in inputs:
+                                predictions[var] = inputs[var]
+                                targets[var] = inputs[var]
+                            else:
+                                raise KeyError(f"{__name__}.predict: cannot find required variable {var} for diagnostic {key}")
+
+                    # at last, compute the diagnostics
+                    predictions[key] = func(predictions)
+                    targets[key] = func(targets)
+
+
+                # now check for static variables, we don't want these in the resulting datasets
+                predictions = predictions[[key for key in list(predictions.coords)+list(predictions.data_vars) if "_static" not in key]]
+                targets = targets[[key for key in list(targets.coords)+list(targets.data_vars) if "_static" not in key]]
                 # Add t0 as new variable, and swap out for logical sample/batch index
                 # swap dims to be [time (aka initial condition time), lead_time (aka forecast_time), level, lat, lon]
                 predictions = swap_batch_time_dims(predictions, inittimes)

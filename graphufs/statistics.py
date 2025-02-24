@@ -7,6 +7,7 @@ import pandas as pd
 from ufs2arco.timer import Timer
 
 from graphcast import data_utils, solar_radiation
+from .diagnostics import prepare_diagnostic_functions
 
 class StatisticsComputer:
     """Class for computing normalization statistics.
@@ -74,7 +75,7 @@ class StatisticsComputer:
 
         self.delta_t = f"{self.time_skip*3} hour" if self.time_skip is not None else "3 hour"
 
-    def __call__(self, data_vars=None, **tisr_kwargs):
+    def __call__(self, data_vars=None, diagnostics=None, **tisr_kwargs):
         """Processes the input dataset to compute normalization statistics.
 
         Args:
@@ -85,12 +86,14 @@ class StatisticsComputer:
         walltime.start()
 
         localtime.start("Setup")
-        ds = self.open_dataset(data_vars=data_vars, **tisr_kwargs)
+        ds = self.open_dataset(data_vars=data_vars, diagnostics=diagnostics, **tisr_kwargs)
         self._transforms_warning(list(ds.data_vars.keys()))
         localtime.stop()
 
 
         logging.info(f"{self.name}: computing statistics for {data_vars}")
+        if diagnostics is not None:
+             logging.info(f"{self.name}: computing statistics for diagnostics: {diagnostics}")
 
         # load if not 3D
         if self.load_full_dataset:
@@ -114,7 +117,7 @@ class StatisticsComputer:
 
         walltime.stop("Total Walltime")
 
-    def open_dataset(self, data_vars=None, **tisr_kwargs):
+    def open_dataset(self, data_vars=None, diagnostics=None, **tisr_kwargs):
         xds = xr.open_zarr(self.path_in, **self.open_zarr_kwargs)
 
         # subsample in time
@@ -128,17 +131,28 @@ class StatisticsComputer:
             **tisr_kwargs,
         )
 
-        # select variables
-        if data_vars is not None:
-            if isinstance(data_vars, str):
-                data_vars = [data_vars]
-            xds = xds[data_vars]
-
         logging.info(f"{self.name}: Adding any transformed variables")
         xds = add_transformed_vars(
             xds,
             transforms=self.transforms,
         )
+
+        if diagnostics is not None:
+            if isinstance(diagnostics, str):
+                diagnostics = [diagnostics]
+            logging.info("{self.name}: computing diagnostics {diagnostics}")
+            mappings = prepare_diagnostic_functions(diagnostics)
+            for key, func in mappings["functions"].items():
+                xds[key] = func(xds)
+        else:
+            diagnostics = []
+
+        # select variables
+        if data_vars is not None:
+            if isinstance(data_vars, str):
+                data_vars = [data_vars]
+            sel_vars = data_vars + diagnostics
+            xds = xds[sel_vars]
         return xds
 
     def subsample_time(self, xds):
@@ -296,15 +310,13 @@ def add_derived_vars(
     compute_tisr: Optional[bool]=False,
     **tisr_kwargs,
 ) -> xr.Dataset:
-    """Add derived variables to the dataset, including the clock variables and TISR from graphcast,
-    as well as any transformed variables, like e.g. log(spfh)
+    """Add derived variables to the dataset, including the clock variables and TISR from graphcast
 
     Note that here we store a separate variable for transformed variables because we may want to store
     both the original stats and transformed stats for comparison at some point.
 
     Args:
         xds (xr.Dataset): with original data
-        transforms (dict, optional): with a mapping from {variable_name : operation} e.g. {"spfh": np.log}
         compute_tisr (bool, optional): if true, add derived toa_incident_solar_radiation from graphcast code
         tisr_kwargs (optional args): passed to TISR computation, e.g. integration period
 
