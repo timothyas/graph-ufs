@@ -138,10 +138,6 @@ class StatisticsComputer:
             **tisr_kwargs,
         )
 
-        # select variables
-        if data_vars is not None:
-            xds = xds[data_vars]
-
         logging.info(f"{self.name}: Adding any transformed variables")
         xds = add_transformed_vars(
             xds,
@@ -160,8 +156,6 @@ class StatisticsComputer:
 
         # select variables
         if data_vars is not None:
-            if isinstance(data_vars, str):
-                data_vars = [data_vars]
             sel_vars = data_vars + diagnostics
             xds = xds[sel_vars]
         return xds
