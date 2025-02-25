@@ -55,6 +55,7 @@ class ReplayEmulator:
     levels = list()             # created in __init__, has exact pfull level values
     latitude = tuple()
     longitude = tuple()
+    missing_dates = tuple()
     tisr_integration_period = None  # TOA Incident Solar Radiation, integration period used in the function:
                                     # graphcast.solar_radiation.get_toa_incident_solar_radiation_for_xarray
                                     # default = self.delta_t, i.e. the ML model time step
@@ -323,6 +324,11 @@ class ReplayEmulator:
             freq=self.delta_t,
             inclusive="both",
         )
+
+        for date in self.missing_dates:
+            if date in time:
+                logging.info(f"{self.name}.get_time: removing {date} from time list")
+                time = time.drop(date)
         return time
 
 

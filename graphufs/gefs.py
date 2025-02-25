@@ -21,6 +21,22 @@ class GEFSEmulator(ReplayEmulator):
         "lon": "longitude",
     }
 
+    missing_dates = (
+        "2017-09-25 06:00:00",
+        "2017-10-28 06:00:00",
+        "2018-03-29 18:00:00",
+        "2018-03-30 18:00:00",
+        "2018-04-20 00:00:00",
+        "2018-07-02 06:00:00",
+        "2018-07-03 06:00:00",
+        "2018-07-12 06:00:00",
+        "2019-02-19 06:00:00",
+        "2020-01-25 12:00:00",
+        "2020-01-30 00:00:00",
+        "2020-09-23 12:00:00",
+        "2020-09-23 18:00:00",
+    )
+
     @property
     def input_dims(self):
         return {
@@ -50,7 +66,7 @@ class GEFSEmulator(ReplayEmulator):
             raise NotImplementedError(f"{self.name}.__init__: no timestep other than 6h implemented")
 
         if self.input_duration != "6h":
-            raise NotImplementedError(f"{self.name}.__init__: it's unclear how to get two consistent timesteps with GEFS")
+            raise NotImplementedError(f"{self.name}.__init__: it's unclear how to get two consistent timesteps with GEFS, also consider the missing dates!")
 
         if self.target_lead_time != "6h":
             logging.warning(f"{self.name}.__init__: it's unclear how target_lead_time != 6h will work")
