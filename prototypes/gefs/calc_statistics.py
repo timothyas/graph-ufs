@@ -41,7 +41,7 @@ def main(varname):
 
 def submit_slurm_job(name, varlist):
 
-    logdir = f"{_scratch}/slurm/statistics"
+    logdir = f"{_scratch}/gefs/one-degree/statistics/slurm/statistics"
     scriptdir = f"./job-scripts"
     for d in [logdir, scriptdir]:
         if not os.path.isdir(d):

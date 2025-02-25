@@ -3,7 +3,7 @@ import xarray as xr
 from jax import tree_util, numpy as jnp
 import numpy as np
 
-from graphufs.gefs import GEFSEmulator as BaseGEFSEmulator
+from graphufs.gefs import GEFSEmulator as VanillaGEFSEmulator
 
 def log(xda):
     cond = xda > 0
@@ -16,15 +16,15 @@ def log(xda):
 def exp(xda):
     return np.exp(xda)
 
-_scratch = "/pscratch/sd/t/timothys/gefs/one-degree"
+_scratch = "/pscratch/sd/t/timothys"
 
-class GEFSEmulator(BaseGEFSEmulator):
+class BaseGEFSEmulator(VanillaGEFSEmulator):
 
-    data_url = f"{_scratch}/forecasts.zarr"
+    data_url = f"{_scratch}/gefs/one-degree/forecasts.zarr"
     norm_urls = {
-        "mean": f"{_scratch}/statistics/mean_by_level.zarr",
-        "std": f"{_scratch}/statistics/stddev_by_level.zarr",
-        "stddiff": f"{_scratch}/statistics/diffs_stddev_by_level.zarr",
+        "mean": f"{_scratch}/gefs/one-degree/statistics/mean_by_level.zarr",
+        "std": f"{_scratch}/gefs/one-degree/statistics/stddev_by_level.zarr",
+        "stddiff": f"{_scratch}/gefs/one-degree/statistics/diffs_stddev_by_level.zarr",
     }
 
     local_store_path = None
@@ -97,6 +97,7 @@ class GEFSEmulator(BaseGEFSEmulator):
     # training protocol
     batch_size = 16
     num_epochs = 10
+    use_half_precision = False
 
     # model config options
     resolution = 1.0
@@ -130,7 +131,7 @@ class GEFSEmulator(BaseGEFSEmulator):
     num_workers = 1
 
 tree_util.register_pytree_node(
-    GEFSEmulator,
-    GEFSEmulator._tree_flatten,
-    GEFSEmulator._tree_unflatten
+    BaseGEFSEmulator,
+    BaseGEFSEmulator._tree_flatten,
+    BaseGEFSEmulator._tree_unflatten
 )
