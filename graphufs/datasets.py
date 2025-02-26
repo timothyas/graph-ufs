@@ -17,7 +17,6 @@ class Dataset():
     """
     Dataset for Replay Data, in the style of pytorch, but does not require torch
     """
-    possible_stacked_dims = ("batch", "member", "lat", "lon", "channels")
 
     def __init__(
         self,
@@ -48,8 +47,8 @@ class Dataset():
 
         self.sample_generator = BatchGenerator(
             ds=xds,
-            input_dims=self.emulator.input_dims,
-            input_overlap=self.emulator.input_overlap,
+            input_dims=self.input_dims,
+            input_overlap=self.input_overlap,
             preload_batch=preload_batch,
         )
 
@@ -104,6 +103,18 @@ class Dataset():
     def initial_times(self) -> list[np.datetime64]:
         """Returns dates of all initial conditions"""
         return [self.xds["time"].values[i + self.emulator.n_input - 1] for i in range(len(self))]
+
+    @property
+    def possible_stacked_dims(self) -> tuple[str]:
+        return self.emulator.possible_stacked_dims
+
+    @property
+    def input_dims(self) -> tuple[str]:
+        return self.emulator.input_dims
+
+    @property
+    def input_overlap(self) -> tuple[str]:
+        return self.emulator.input_overlap
 
 
     def _stack(self, a: xr.DataArray, b: Optional[xr.DataArray] = None) -> xr.DataArray:

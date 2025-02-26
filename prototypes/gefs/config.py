@@ -3,7 +3,7 @@ import xarray as xr
 from jax import tree_util, numpy as jnp
 import numpy as np
 
-from graphufs.gefs import GEFSEmulator as VanillaGEFSEmulator
+from graphufs.gefs import GEFSForecastEmulator
 
 def log(xda):
     cond = xda > 0
@@ -18,9 +18,9 @@ def exp(xda):
 
 _scratch = "/pscratch/sd/t/timothys"
 
-class BaseGEFSEmulator(VanillaGEFSEmulator):
+class BaseGEFSEmulator(GEFSForecastEmulator):
 
-    data_url = f"{_scratch}/gefs/one-degree/forecasts.zarr"
+    data_url = f"/home/tsmith/work/ufs2arco/examples/gefs/sample-gefs.zarr"
     norm_urls = {
         "mean": f"{_scratch}/gefs/one-degree/statistics/mean_by_level.zarr",
         "std": f"{_scratch}/gefs/one-degree/statistics/stddev_by_level.zarr",
@@ -75,7 +75,8 @@ class BaseGEFSEmulator(VanillaGEFSEmulator):
         "day_progress_sin",
         "day_progress_cos",
     )
-    pressure_levels = (100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000)
+    #pressure_levels = (100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000)
+    pressure_levels = (100, 500, 1000)
 
     # time related
     delta_t = "6h"
@@ -83,7 +84,8 @@ class BaseGEFSEmulator(VanillaGEFSEmulator):
     target_lead_time = "6h"
     training_dates = (
         "2017-01-01T00",
-        "2019-06-30T18"
+        "2017-01-02T18",
+    #    "2019-06-30T18"
     )
     validation_dates = (
         "2019-07-01T00",
@@ -95,7 +97,7 @@ class BaseGEFSEmulator(VanillaGEFSEmulator):
     )
 
     # training protocol
-    batch_size = 16
+    batch_size = 2
     num_epochs = 10
     use_half_precision = False
 

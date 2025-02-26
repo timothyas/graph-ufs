@@ -9,9 +9,8 @@ from graphcast.graphcast import ModelConfig, TaskConfig, CheckPoint
 
 from .emulator import ReplayEmulator
 
-class GEFSEmulator(ReplayEmulator):
 
-    n_members = 21
+class GEFSForecastEmulator(ReplayEmulator):
 
     dim_names = {
         "time": "t0",
@@ -37,11 +36,13 @@ class GEFSEmulator(ReplayEmulator):
         "2020-09-23 18:00:00",
     )
 
+    possible_stacked_dims = ("batch", "lat", "lon", "channels")
+
     @property
     def input_dims(self):
         return {
             "time": self.n_input,
-            "member": 2,
+            "member": 1,
             "lat": len(self.latitude),
             "lon": len(self.longitude),
             "level": len(self.pressure_levels),
@@ -49,9 +50,7 @@ class GEFSEmulator(ReplayEmulator):
 
     @property
     def input_overlap(self):
-        return {
-            "member": 1,
-        }
+        return dict()
 
 
     def __init__(self, mpi_rank=None, mpi_size=None):
@@ -243,8 +242,35 @@ class GEFSEmulator(ReplayEmulator):
     def from_parser(cls):
         raise NotImplementedError
 
+class GEFSDeviationEmulator(GEFSForecastEmulator):
+
+
+    possible_stacked_dims = ("batch", "member", "lat", "lon", "channels")
+
+    @property
+    def input_dims(self):
+        return {
+            "time": self.n_input,
+            "member": 2,
+            "lat": len(self.latitude),
+            "lon": len(self.longitude),
+            "level": len(self.pressure_levels),
+        }
+
+    @property
+    def input_overlap(self):
+        return {
+            "member": 1,
+        }
+
 tree_util.register_pytree_node(
-    GEFSEmulator,
-    GEFSEmulator._tree_flatten,
-    GEFSEmulator._tree_unflatten,
+    GEFSForecastEmulator,
+    GEFSForecastEmulator._tree_flatten,
+    GEFSForecastEmulator._tree_unflatten,
+)
+
+tree_util.register_pytree_node(
+    GEFSDeviationEmulator,
+    GEFSDeviationEmulator._tree_flatten,
+    GEFSDeviationEmulator._tree_unflatten,
 )

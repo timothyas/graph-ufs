@@ -145,6 +145,8 @@ class ReplayEmulator:
         "lon": "grid_xt",
     }
 
+    possible_stacked_dims = ("batch", "lat", "lon", "channels")
+
     def __init__(self, mpi_rank=None, mpi_size=None):
 
         if self.local_store_path is None:

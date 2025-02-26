@@ -4,7 +4,7 @@ from prototypes.gefs.config import BaseGEFSEmulator, _scratch
 
 class GEFSTrainer(BaseGEFSEmulator):
 
-    local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree"
+    local_store_path = f"./zarr-stores"
 
 class GEFSPreprocessor(GEFSTrainer):
 
