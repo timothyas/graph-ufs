@@ -259,9 +259,7 @@ class GEFSDeviationEmulator(GEFSForecastEmulator):
 
     @property
     def input_overlap(self):
-        return {
-            "member": 1,
-        }
+        return dict()
 
 tree_util.register_pytree_node(
     GEFSForecastEmulator,
