@@ -161,7 +161,7 @@ class GEFSForecastEmulator(ReplayEmulator):
         # forcings are actually tricky... since we want to compute them as a function of valid_time
         if set(self.forcing_variables) & data_utils._DERIVED_VARS:
             data_utils.add_derived_vars(sample)
-        if "toa_incident_solar_radiation" in self.all_variables:
+        if "toa_incident_solar_radiation" in self.all_variables and "toa_incident_solar_radiation" not in sample:
             tisr = xr.concat(
                 [
                     solar_radiation.get_toa_incident_solar_radiation_for_xarray(
