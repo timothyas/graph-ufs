@@ -140,7 +140,13 @@ class GEFSForecastEmulator(ReplayEmulator):
         except that this sample is very easy to get the inputs and targets from... I think
         """
 
-        # preprocess
+        # rename time to t0, and make time relative to last initial condition
+        sample = sample.rename({"time": "t0"})
+        sample["time"] = sample["t0"] - sample["t0"][self.n_input-1] # should always be 0 with single IC, but whatever
+        sample = sample.swap_dims({"t0": "time"})
+        sample = sample.set_coords("t0")
+
+        # get valid_time for computing stuff
         sample["datetime"].load()
 
         # forcings are actually tricky... since we want to compute them as a function of valid_time
@@ -162,10 +168,10 @@ class GEFSForecastEmulator(ReplayEmulator):
         if drop_datetime:
             sample = sample.drop_vars("datetime")
 
-        # Note: It's unclear how to handle this with multiple ICs
-        sample = sample.squeeze("time", drop=True)
-
         # Rename member to original_member
+        # Note that for the forecast case, we could just squeeze out the member dim,
+        # but we go through this for the deviation dataset, so that for each sample we
+        # have member 0 and 1. This allows multiple samples to be stacked together properly
         sample = sample.rename({"member": "original_member"})
         sample["member"] = xr.DataArray(range(len(sample["original_member"])), coords=sample.original_member.coords)
         sample = sample.set_coords("member")
