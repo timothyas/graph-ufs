@@ -265,7 +265,7 @@ class ReplayEmulator:
 
         # this used to be Dataset._preprocess, but it's unique to each type of emulator
         sample = sample.rename({"time": "datetime"})
-        sample["time"] = sample["datetime"] - sample["datetime"][0]
+        sample["time"] = sample["datetime"] - sample["datetime"][self.n_input-1]
         sample = sample.swap_dims({"datetime": "time"}).reset_coords()
         sample = sample.set_coords(["datetime"])
         return data_utils.extract_inputs_targets_forcings(
