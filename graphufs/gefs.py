@@ -128,23 +128,33 @@ class GEFSForecastEmulator(ReplayEmulator):
         self.norm_urls = self.norm_urls.copy()
         self.norm = dict()
         self.stacked_norm = dict()
-        self.set_normalization()
-        self.set_stacked_normalization()
+        print("skip norm")
+        #self.set_normalization()
+        #self.set_stacked_normalization()
 
         # TOA Incident Solar Radiation integration period
         if self.tisr_integration_period is None:
             self.tisr_integration_period = self.delta_t
 
-    def extract_inputs_targets_forcings(self, sample, drop_datetime=True, keep_member_id=False, **tisr_kwargs):
+    def extract_inputs_targets_forcings(self, sample, drop_datetime=True, drop_original_member=False, **tisr_kwargs):
         """This should mirror graphcast.data_utils.extract_inputs_targets_forcings,
         except that this sample is very easy to get the inputs and targets from... I think
         """
 
+        # First, make "time" and "member" consistent quantities among samples
         # rename time to t0, and make time relative to last initial condition
         sample = sample.rename({"time": "t0"})
         sample["time"] = sample["t0"] - sample["t0"][self.n_input-1] # should always be 0 with single IC, but whatever
         sample = sample.swap_dims({"t0": "time"})
         sample = sample.set_coords("t0")
+
+        # Rename member to original_member
+        # In forecast case, it's always 0
+        # In deviation case, it's always [0, 1]
+        sample = sample.rename({"member": "original_member"})
+        sample["member"] = xr.DataArray(range(len(sample["original_member"])), coords=sample.original_member.coords)
+        sample = sample.set_coords("member")
+        sample = sample.swap_dims({"original_member": "member"})
 
         # get valid_time for computing stuff
         sample["datetime"].load()
@@ -168,29 +178,18 @@ class GEFSForecastEmulator(ReplayEmulator):
         if drop_datetime:
             sample = sample.drop_vars("datetime")
 
-        # Rename member to original_member
-        # Note that for the forecast case, we could just squeeze out the member dim,
-        # but we go through this for the deviation dataset, so that for each sample we
-        # have member 0 and 1. This allows multiple samples to be stacked together properly
-        sample = sample.rename({"member": "original_member"})
-        sample["member"] = xr.DataArray(range(len(sample["original_member"])), coords=sample.original_member.coords)
-        sample = sample.set_coords("member")
-        sample = sample.swap_dims({"original_member": "member"})
-
         # inputs will only come from data at fhr=0
-        leads = self.target_lead_time
-        leads = [leads] if isinstance(leads, str) else leads
-        fhrs = [int(pd.Timedelta(lead).value / 1e9 / 3600) for lead in leads]
-
         inputs = sample.sel(fhr=0, drop=True)
         inputs = inputs[[v for v in self.input_variables]]
 
-        # Note: it's not clear if this squeeze is necessary
-        # if it is, it's not clear what will happen with longer fhr's
+        # Get all leads times
+        leads = self.target_lead_time
+        leads = [leads] if isinstance(leads, str) else leads
+        fhrs = [int(pd.Timedelta(lead).value / 1e9 / 3600) for lead in leads]
         targets = sample.sel(fhr=fhrs).squeeze(dim="fhr", drop=True)
         forcings = targets[[v for v in self.forcing_variables]]
         targets = targets[[v for v in self.target_variables]]
-        if not keep_member_id:
+        if drop_original_member:
             inputs = inputs.drop_vars("original_member")
             targets = targets.drop_vars("original_member")
             forcings = forcings.drop_vars("original_member") if "original_member" in forcings else forcings
