@@ -20,7 +20,7 @@ _scratch = "/pscratch/sd/t/timothys"
 
 class BaseGEFSEmulator(GEFSForecastEmulator):
 
-    data_url = f"/home/tsmith/work/ufs2arco/examples/gefs/sample-gefs.zarr"
+    data_url = f"{_scratch}/gefs/one-degree/forecasts.zarr"
     norm_urls = {
         "mean": f"{_scratch}/gefs/one-degree/statistics/mean_by_level.zarr",
         "std": f"{_scratch}/gefs/one-degree/statistics/stddev_by_level.zarr",
@@ -75,8 +75,7 @@ class BaseGEFSEmulator(GEFSForecastEmulator):
         "day_progress_sin",
         "day_progress_cos",
     )
-    #pressure_levels = (100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000)
-    pressure_levels = (100, 500, 1000)
+    pressure_levels = (100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000)
 
     # time related
     delta_t = "6h"
@@ -84,8 +83,7 @@ class BaseGEFSEmulator(GEFSForecastEmulator):
     target_lead_time = "6h"
     training_dates = (
         "2017-01-01T00",
-        "2017-01-02T18",
-    #    "2019-06-30T18"
+        "2019-06-30T18"
     )
     validation_dates = (
         "2019-07-01T00",
@@ -97,8 +95,8 @@ class BaseGEFSEmulator(GEFSForecastEmulator):
     )
 
     # training protocol
-    batch_size = 2
-    num_epochs = 10
+    batch_size = 16
+    num_epochs = 64
     use_half_precision = False
 
     # model config options

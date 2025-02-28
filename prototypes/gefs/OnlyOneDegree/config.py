@@ -5,11 +5,12 @@ from prototypes.gefs.config import BaseGEFSEmulator, _scratch
 
 class GEFSMSETrainer(BaseGEFSEmulator):
 
-    local_store_path = f"./mse-loss"
+    local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/forecast-training"
 
 class GEFSDeviationTrainer(GEFSDeviationEmulator, BaseGEFSEmulator):
 
-    local_store_path = f"./dev-loss"
+    local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/deviation-training"
+    num_epochs = 28
 
 class GEFSEvaluator(GEFSMSETrainer):
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
