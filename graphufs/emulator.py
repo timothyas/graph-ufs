@@ -885,8 +885,8 @@ class ReplayEmulator:
         inputs, targets = gds[0]
 
         # get meta information, like varname/level/timeslot for each channel
-        input_meta = get_channel_index(xinputs)
-        output_meta = get_channel_index(xtargets)
+        input_meta = get_channel_index(xinputs, preserved_dims=gds.preserved_dims)
+        output_meta = get_channel_index(xtargets, preserved_dims=gds.preserved_dims)
 
         # create loss_weights with shape:
         # [n_samples_per_batch, n_lat, n_lon, n_channels]

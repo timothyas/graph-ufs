@@ -273,8 +273,8 @@ def get_last_input_mapping(gds):
 
     # get a sample of the data to work with
     xinputs, xtargets, _ = gds.get_xarrays(0)
-    inputs_index = get_channel_index(xinputs)
-    targets_index = get_channel_index(xtargets)
+    inputs_index = get_channel_index(xinputs, preserved_dims=gds.preserved_dims)
+    targets_index = get_channel_index(xtargets, preserved_dims=gds.preserved_dims)
 
     # figure out the max number of timesteps to keep track of
     n_time = 0
@@ -426,7 +426,7 @@ def convert_loss_channel2var(Emulator, loss2d):
     tds = Dataset(em, mode="training")
 
     _, xtargets, _ = tds.get_xarrays(0)
-    tmeta = get_channel_index(xtargets)
+    tmeta = get_channel_index(xtargets, preserved_dims=tds.preserved_dims)
 
     varloss = {}
     for cidx in loss2d.channel.values:
