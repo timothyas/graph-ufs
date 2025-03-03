@@ -33,17 +33,18 @@ class BaseGEFSEmulator(GEFSForecastEmulator):
     # task config options
     input_variables = (
         # 3D Variables
+        "gh",
         "u",
         "v",
         "w",
         "t",
         "q",
         # Surface Variables
+        "sp",
         "u10",
         "v10",
         "t2m",
         "sh2",
-        "sp",
         # Forcing Variables at Input Time
         "toa_incident_solar_radiation",
         "year_progress_sin",
@@ -56,17 +57,18 @@ class BaseGEFSEmulator(GEFSForecastEmulator):
     )
     target_variables = (
         # 3D Variables
+        "gh",
         "u",
         "v",
         "w",
         "t",
         "q",
         # Surface Variables
+        "sp",
         "u10",
         "v10",
         "t2m",
         "sh2",
-        "sp",
     )
     forcing_variables = (
         "toa_incident_solar_radiation",

@@ -5,9 +5,10 @@ import subprocess
 from graphufs import StatisticsComputer, add_derived_vars
 from graphufs.log import setup_simple_log
 
-from config import GEFSEmulator as Emulator, _scratch
+from config import BaseGEFSEmulator as Emulator, _scratch
 
 _3dvars = (
+    "gh"
     "u",
     "v",
     "w",
@@ -101,6 +102,7 @@ if __name__ == "__main__":
         ],
         "dynamics": [
             # 3D Variables
+            "gh"
             "u",
             "v",
             "w",
