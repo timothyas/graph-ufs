@@ -14,7 +14,7 @@ from graphufs.progress import ProgressTracker
 from graphufs.mpi import MPITopology
 
 # in the future this could be generalized to where it just takes the following as inputs
-from config import GEFSMSEPreprocessor as Emulator
+from config import GEFSDeviationPreprocessor as Emulator
 _n_jobs = 1
 _n_tasks = Emulator.batch_size
 _n_cpus_per_task = 256 // _n_tasks
@@ -40,12 +40,14 @@ def setup(mode, level=logging.INFO):
         preload_batch=False,
         input_chunks={
             "sample": 1,
+            "member": 1,
             "lat": -1,
             "lon": -1,
             "channels": _input_channel_chunks,
         },
         target_chunks={
             "sample": 1,
+            "member": 1,
             "lat": -1,
             "lon": -1,
             "channels": _target_channel_chunks,
@@ -67,15 +69,15 @@ def setup(mode, level=logging.INFO):
 def submit_slurm_job():
 
     the_code = \
-        f"from preprocess_forecast import store_batch_of_samples\n"+\
+        f"from preprocess_deviation import store_batch_of_samples\n"+\
         f"store_batch_of_samples('training')\n" +\
         f"store_batch_of_samples('validation')\n"
 
     slurm_dir = f"{Emulator.local_store_path}/slurm"
     txt = "#!/bin/bash\n\n" +\
-        f"#SBATCH -J preprocess-forecast\n"+\
-        f"#SBATCH -o {slurm_dir}/preprocess_forecast.%j.out\n"+\
-        f"#SBATCH -e {slurm_dir}/preprocess_forecast.%j.err\n"+\
+        f"#SBATCH -J preprocess-deviation\n"+\
+        f"#SBATCH -o {slurm_dir}/preprocess_deviation.%j.out\n"+\
+        f"#SBATCH -e {slurm_dir}/preprocess_deviation.%j.err\n"+\
         f"#SBATCH --nodes=1\n"+\
         f"#SBATCH --ntasks={_n_tasks}\n"+\
         f"#SBATCH --cpus-per-task={_n_cpus_per_task}\n"+\
@@ -87,7 +89,7 @@ def submit_slurm_job():
         f'srun python -c "{the_code}"'
 
     script_dir = "job-scripts"
-    fname = f"{script_dir}/submit_preprocess_forecast.sh"
+    fname = f"{script_dir}/submit_preprocess_deviation.sh"
 
     for this_dir in [slurm_dir, script_dir]:
         if not os.path.isdir(this_dir):
