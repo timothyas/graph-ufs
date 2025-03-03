@@ -8,7 +8,7 @@ from graphufs.log import setup_simple_log
 from config import BaseGEFSEmulator as Emulator, _scratch
 
 _3dvars = (
-    "gh"
+    "gh",
     "u",
     "v",
     "w",

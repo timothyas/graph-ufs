@@ -93,29 +93,32 @@ class StatisticsComputer:
         self._transforms_warning(list(ds.data_vars.keys()))
         localtime.stop()
 
-        logging.info(f"{self.name}: computing statistics for {data_vars}")
+        msg = f"{self.name}: computing statistics for {data_vars}\n"
+        for key in ["path_in", "path_out", "start_date", "end_date", "time_skip", "load_full_dataset"]:
+            msg += f"{key:<18s}: {getattr(self, key)}\n"
+        logging.info(msg)
         if diagnostics is not None:
              logging.info(f"{self.name}: computing statistics for diagnostics: {diagnostics}")
 
         # load if not 3D
         if self.load_full_dataset:
-            localtime.start("Loading the whole dataset...")
+            logging.info("Loading the whole dataset...")
             ds = ds.load();
-            localtime.stop()
+            logging.info("... done")
 
         # do the computations
-        localtime.start("Computing mean")
+        logging.info("Computing mean")
         self.calc_mean_by_level(ds)
-        localtime.stop()
+        logging.info("Done computing mean")
 
-        localtime.start("Computing stddev")
+        logging.info("Computing stddev")
         self.calc_stddev_by_level(ds)
-        localtime.stop()
+        logging.info("Done computing stddev")
 
         if "time" in ds.dims:
-            localtime.start("Computing diff stddev")
+            logging.info("Computing diff stddev")
             self.calc_diffs_stddev_by_level(ds)
-            localtime.stop()
+            logging.info("Done computing diff stddev")
 
         walltime.stop("Total Walltime")
 
