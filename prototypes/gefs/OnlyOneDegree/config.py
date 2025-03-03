@@ -3,9 +3,15 @@ from jax import numpy as jnp
 from graphufs.gefs import GEFSDeviationEmulator
 from prototypes.gefs.config import BaseGEFSEmulator, _scratch
 
+
+
 class GEFSMSETrainer(BaseGEFSEmulator):
 
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/forecast-training"
+
+class GEFSMSEPreprocessor(GEFSMSETrainer):
+
+    batch_size = 64
 
 class GEFSDeviationTrainer(GEFSDeviationEmulator, BaseGEFSEmulator):
 
@@ -19,6 +25,12 @@ class GEFSEvaluator(GEFSMSETrainer):
     evaluation_checkpoint_id = 64
     batch_size = 32
 
+
+tree_util.register_pytree_node(
+    GEFSMSEPreprocessor,
+    GEFSMSEPreprocessor._tree_flatten,
+    GEFSMSEPreprocessor._tree_unflatten
+)
 
 tree_util.register_pytree_node(
     GEFSMSETrainer,
