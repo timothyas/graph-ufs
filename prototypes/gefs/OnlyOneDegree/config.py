@@ -8,6 +8,7 @@ from prototypes.gefs.config import BaseGEFSEmulator, _scratch
 class GEFSForecastTrainer(BaseGEFSEmulator):
 
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/forecast-training"
+    peak_lr = 1e-3
 
 class GEFSForecastPreprocessor(GEFSForecastTrainer):
 
@@ -21,6 +22,7 @@ class GEFSDeviationTrainer(GEFSDeviationEmulator, BaseGEFSEmulator):
 
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/deviation-training"
     num_epochs = 28
+    peak_lr = 1e-4
 
 class GEFSDeviationPreprocessor(GEFSDeviationTrainer):
 

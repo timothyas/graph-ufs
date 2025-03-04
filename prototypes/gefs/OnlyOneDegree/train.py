@@ -9,6 +9,6 @@ from config import (
 from prototypes.gefs.train import train
 
 if __name__ == "__main__":
-    cfg = train(RemoteForecastTrainer, PackedForecastTrainer, peak_lr=1e-3)
-    #cfg = train(RemoteDeviationTrainer, PackedDeviationTrainer, peak_lr=1e-4, cfg=cfg)
+    cfg = train(RemoteForecastTrainer, PackedForecastTrainer)
+    #cfg = train(RemoteDeviationTrainer, PackedDeviationTrainer, cfg=cfg)
 

@@ -15,7 +15,7 @@ from graphufs.stacked_mpi_training import (
 from graphufs.optim import clipped_cosine_adamw
 from graphufs import utils
 
-def train(RemoteEmulator, PackedEmulator, peak_lr, cfg=None):
+def train(RemoteEmulator, PackedEmulator, cfg=None):
     """
 
     Args:
@@ -86,12 +86,12 @@ def train(RemoteEmulator, PackedEmulator, peak_lr, cfg=None):
     # setup optimizer
     steps_in_epoch = len(trainer)
     n_total = emulator.num_epochs * steps_in_epoch
-    n_linear = 1_000
+    n_linear = emulator.n_linear_warmup_steps
     n_cosine = n_total - n_linear
     optimizer = clipped_cosine_adamw(
         n_linear=n_linear,
         n_total=n_total,
-        peak_value=peak_lr,
+        peak_value=emulator.peak_lr,
     )
 
     logging.info(f"Starting Training with:")
