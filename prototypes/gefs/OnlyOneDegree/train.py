@@ -1,7 +1,7 @@
 from mpi4py import MPI
 from config import (
-    GEFSMSETrainer as RemoteMSETrainer,
-    GEFSMSEPreprocessed as PackedMSETrainer,
+    GEFSForecastTrainer as RemoteForecastTrainer,
+    GEFSForecastPreprocessed as PackedForecastTrainer,
     GEFSDeviationTrainer as RemoteDeviationTrainer,
     GEFSDeviationPreprocessed as PackedDeviationTrainer,
 )
@@ -9,6 +9,6 @@ from config import (
 from prototypes.gefs.train import train
 
 if __name__ == "__main__":
-    cfg = train(RemoteMSETrainer, PackedMSETrainer, peak_lr=1e-3)
+    cfg = train(RemoteForecastTrainer, PackedForecastTrainer, peak_lr=1e-3)
     #cfg = train(RemoteDeviationTrainer, PackedDeviationTrainer, peak_lr=1e-4, cfg=cfg)
 

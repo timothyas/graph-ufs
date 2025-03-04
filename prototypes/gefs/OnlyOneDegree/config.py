@@ -5,15 +5,15 @@ from prototypes.gefs.config import BaseGEFSEmulator, _scratch
 
 
 
-class GEFSMSETrainer(BaseGEFSEmulator):
+class GEFSForecastTrainer(BaseGEFSEmulator):
 
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/forecast-training"
 
-class GEFSMSEPreprocessor(GEFSMSETrainer):
+class GEFSForecastPreprocessor(GEFSForecastTrainer):
 
     batch_size = 64
 
-class GEFSMSEPreprocessed(GEFSMSETrainer):
+class GEFSForecastPreprocessed(GEFSForecastTrainer):
     input_transforms = None
     output_transforms = None
 
@@ -30,7 +30,7 @@ class GEFSDeviationPreprocessed(GEFSDeviationTrainer):
     input_transforms = None
     output_transforms = None
 
-class GEFSEvaluator(GEFSMSETrainer):
+class GEFSEvaluator(GEFSForecastTrainer):
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
     target_lead_time = [f"{n}h" for n in range(3, 3*8*10+1, 3)]
     sample_stride = 9
@@ -39,21 +39,21 @@ class GEFSEvaluator(GEFSMSETrainer):
 
 
 tree_util.register_pytree_node(
-    GEFSMSETrainer,
-    GEFSMSETrainer._tree_flatten,
-    GEFSMSETrainer._tree_unflatten
+    GEFSForecastTrainer,
+    GEFSForecastTrainer._tree_flatten,
+    GEFSForecastTrainer._tree_unflatten
 )
 
 tree_util.register_pytree_node(
-    GEFSMSEPreprocessor,
-    GEFSMSEPreprocessor._tree_flatten,
-    GEFSMSEPreprocessor._tree_unflatten
+    GEFSForecastPreprocessor,
+    GEFSForecastPreprocessor._tree_flatten,
+    GEFSForecastPreprocessor._tree_unflatten
 )
 
 tree_util.register_pytree_node(
-    GEFSMSEPreprocessed,
-    GEFSMSEPreprocessed._tree_flatten,
-    GEFSMSEPreprocessed._tree_unflatten
+    GEFSForecastPreprocessed,
+    GEFSForecastPreprocessed._tree_flatten,
+    GEFSForecastPreprocessed._tree_unflatten
 )
 
 tree_util.register_pytree_node(
