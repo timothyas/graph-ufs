@@ -4,7 +4,7 @@ import logging
 from mpi4py import MPI
 
 from graphufs.datasets import Dataset
-from graphufs.batchloader import MPIBatchLoader
+from graphufs.tensorstore import PackedDataset as TSPackedDataset, MPIBatchLoader as TSBatchLoader
 from graphufs.mpi import MPITopology
 
 from graphufs.stacked_mpi_training import (
@@ -15,11 +15,11 @@ from graphufs.stacked_mpi_training import (
 from graphufs.optim import clipped_cosine_adamw
 from graphufs import utils
 
-def train(Emulator, peak_lr, cfg=None):
+def train(RemoteEmulator, PackedEmulator, peak_lr, cfg=None):
     """
 
     Args:
-        Emulator (graphufs.Emulator)
+        RemoteEmulator, PackedEmulator (graphufs.Emulator)
         cfg (dict, optional): if provided, a dict with
             topo, params, state, opt_state
     """
@@ -30,16 +30,18 @@ def train(Emulator, peak_lr, cfg=None):
         is_pickup = False
         cfg = dict()
         cfg["opt_state"] = None
-        cfg["topo"] = MPITopology(log_dir=f"{Emulator.local_store_path}/logs/training")
+        cfg["topo"] = MPITopology(log_dir=f"{RemoteEmulator.local_store_path}/logs/training")
 
-    emulator = Emulator(mpi_rank=cfg["topo"].rank, mpi_size=cfg["topo"].size)
+    emulator = PackedEmulator(mpi_rank=cfg["topo"].rank, mpi_size=cfg["topo"].size)
+    remote_emulator = RemoteEmulator(mpi_rank=cfg["topo"].rank, mpi_size=cfg["topo"].size)
 
     # data generators
-    tds = Dataset(emulator, mode="training")
-    vds = Dataset(emulator, mode="validation")
+    tds = Dataset(remote_emulator, mode="training")
+    training_data = TSPackedDataset(emulator, mode="training")
+    validation_data = TSPackedDataset(emulator, mode="validation")
 
-    trainer = MPIBatchLoader(
-        tds,
+    trainer = TSBatchLoader(
+        training_data,
         batch_size=emulator.batch_size,
         shuffle=True,
         drop_last=True,
@@ -48,8 +50,8 @@ def train(Emulator, peak_lr, cfg=None):
         mpi_topo=cfg["topo"],
         rng_seed=10,
     )
-    validator = MPIBatchLoader(
-        vds,
+    validator = TSBatchLoader(
+        validation_data,
         batch_size=emulator.batch_size,
         shuffle=True,
         drop_last=True,
@@ -61,7 +63,7 @@ def train(Emulator, peak_lr, cfg=None):
 
     logging.info("Initializing Loss Function Weights and Stacked Mappings")
     # compute loss function weights once
-    loss_weights = emulator.calc_loss_weights(tds)
+    loss_weights = remote_emulator.calc_loss_weights(tds)
     last_input_channel_mapping = utils.get_last_input_mapping(tds)
 
     # initialize a random model

@@ -13,6 +13,10 @@ class GEFSMSEPreprocessor(GEFSMSETrainer):
 
     batch_size = 64
 
+class GEFSMSEPreprocessed(GEFSMSETrainer):
+    input_transforms = None
+    output_transforms = None
+
 class GEFSDeviationTrainer(GEFSDeviationEmulator, BaseGEFSEmulator):
 
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/deviation-training"
@@ -21,6 +25,10 @@ class GEFSDeviationTrainer(GEFSDeviationEmulator, BaseGEFSEmulator):
 class GEFSDeviationPreprocessor(GEFSDeviationTrainer):
 
     batch_size = 64
+
+class GEFSDeviationPreprocessed(GEFSDeviationTrainer):
+    input_transforms = None
+    output_transforms = None
 
 class GEFSEvaluator(GEFSMSETrainer):
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
@@ -43,6 +51,12 @@ tree_util.register_pytree_node(
 )
 
 tree_util.register_pytree_node(
+    GEFSMSEPreprocessed,
+    GEFSMSEPreprocessed._tree_flatten,
+    GEFSMSEPreprocessed._tree_unflatten
+)
+
+tree_util.register_pytree_node(
     GEFSDeviationTrainer,
     GEFSDeviationTrainer._tree_flatten,
     GEFSDeviationTrainer._tree_unflatten
@@ -52,6 +66,12 @@ tree_util.register_pytree_node(
     GEFSDeviationPreprocessor,
     GEFSDeviationPreprocessor._tree_flatten,
     GEFSDeviationPreprocessor._tree_unflatten
+)
+
+tree_util.register_pytree_node(
+    GEFSDeviationPreprocessed,
+    GEFSDeviationPreprocessed._tree_flatten,
+    GEFSDeviationPreprocessed._tree_unflatten
 )
 
 tree_util.register_pytree_node(
