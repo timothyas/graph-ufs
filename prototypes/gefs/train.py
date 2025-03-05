@@ -63,7 +63,7 @@ def train(RemoteEmulator, PackedEmulator, cfg=None):
 
     logging.info("Initializing Loss Function Weights and Stacked Mappings")
     # compute loss function weights once
-    loss_weights = remote_emulator.calc_loss_weights(tds)
+    loss_weights = emulator.calc_loss_weights(tds)
     last_input_channel_mapping = utils.get_last_input_mapping(tds)
 
     # initialize a random model

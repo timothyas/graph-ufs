@@ -23,6 +23,7 @@ class GEFSDeviationTrainer(BaseGEFSEmulator, GEFSDeviationEmulator):
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/deviation-training"
     num_epochs = 28
     peak_lr = 1e-4
+    batch_size = 8
 
 class GEFSDeviationPreprocessor(GEFSDeviationTrainer):
 

@@ -10,5 +10,5 @@ from prototypes.gefs.train import train
 
 if __name__ == "__main__":
     cfg = train(RemoteForecastTrainer, PackedForecastTrainer)
-    #cfg = train(RemoteDeviationTrainer, PackedDeviationTrainer, cfg=cfg)
+    cfg = train(RemoteDeviationTrainer, PackedDeviationTrainer, cfg=cfg)
 

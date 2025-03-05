@@ -26,6 +26,7 @@ from graphcast.stacked_graphcast import StackedGraphCast
 from graphcast.stacked_casting import StackedBfloat16Cast
 from graphcast.stacked_normalization import StackedInputsAndResiduals
 from graphcast.stacked_diagnostics import StackedInputsResidualsDiagnostics
+from graphcast.stacked_deviation import StackedInputsResidualsDeviations
 
 from .gefs import GEFSDeviationEmulator
 
@@ -53,7 +54,7 @@ def construct_wrapped_graphcast(emulator, last_input_channel_mapping, diagnostic
         if emulator.diagnostics is not None:
             raise NotImplementedError(f"stacked_training.construct_wrapped_graphcast: cannot do deviations and diagnostics in loss function ... yet!")
         NormPredictor = StackedInputsResidualsDeviations
-        kwargs["deviation_stddev_by_level"]=emulator.stacked_norm["deviation_stddev"],
+        kwargs["deviation_stddev_by_level"]=emulator.stacked_norm["deviation_stddev"]
 
     predictor = NormPredictor(
         predictor,
