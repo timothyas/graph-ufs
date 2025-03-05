@@ -100,7 +100,7 @@ class BaseGEFSEmulator(GEFSForecastEmulator):
     # training protocol
     batch_size = 16
     num_epochs = 64
-    use_half_precision = True
+    use_half_precision = False
     n_linear_warmup_steps = 1_000
 
     # model config options
