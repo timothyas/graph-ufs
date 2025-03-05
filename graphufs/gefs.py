@@ -250,6 +250,12 @@ class GEFSForecastEmulator(ReplayEmulator):
 class GEFSDeviationEmulator(GEFSForecastEmulator):
 
 
+    norm_urls = {
+        "mean": "",
+        "std": "",
+        "stddiff": "",
+        "deviation_stddev": "",
+    }
     possible_stacked_dims = ("batch", "member", "lat", "lon", "channels")
 
     @property
@@ -265,6 +271,7 @@ class GEFSDeviationEmulator(GEFSForecastEmulator):
     @property
     def input_overlap(self):
         return dict()
+
 
 tree_util.register_pytree_node(
     GEFSForecastEmulator,

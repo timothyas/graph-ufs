@@ -782,7 +782,7 @@ class ReplayEmulator:
                 xds.to_zarr(local_path)
             return xds
 
-        for key in ["mean", "std", "stddiff"]:
+        for key in self.norm.keys():
             self.norm[key] = open_normalization(key)
 
     def set_stacked_normalization(self):

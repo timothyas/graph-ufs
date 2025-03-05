@@ -27,6 +27,8 @@ from graphcast.stacked_casting import StackedBfloat16Cast
 from graphcast.stacked_normalization import StackedInputsAndResiduals
 from graphcast.stacked_diagnostics import StackedInputsResidualsDiagnostics
 
+from .gefs import GEFSDeviationEmulator
+
 from tqdm import tqdm
 
 
@@ -40,24 +42,27 @@ def construct_wrapped_graphcast(emulator, last_input_channel_mapping, diagnostic
     # normalization to inputs & targets
     if emulator.use_half_precision:
         predictor = StackedBfloat16Cast(predictor)
-    if emulator.diagnostics is None:
-        predictor = StackedInputsAndResiduals(
-            predictor,
-            diffs_stddev_by_level=emulator.stacked_norm["stddiff"],
-            mean_by_level=emulator.stacked_norm["mean"],
-            stddev_by_level=emulator.stacked_norm["std"],
-            last_input_channel_mapping=last_input_channel_mapping,
-        )
-    else:
-        predictor = StackedInputsResidualsDiagnostics(
-            predictor,
-            diffs_stddev_by_level=emulator.stacked_norm["stddiff"],
-            mean_by_level=emulator.stacked_norm["mean"],
-            stddev_by_level=emulator.stacked_norm["std"],
-            last_input_channel_mapping=last_input_channel_mapping,
-            mappings=diagnostic_mappings,
 
-        )
+    NormPredictor = StackedInputsAndResiduals
+    kwargs = {}
+    if emulator.diagnostics is not None:
+        NormPredictor = StackedInputsResidualsDiagnostics
+        kwargs["mappings"] = diagnostic_mappings
+
+    if isinstance(emulator, GEFSDeviationEmulator):
+        if emulator.diagnostics is not None:
+            raise NotImplementedError(f"stacked_training.construct_wrapped_graphcast: cannot do deviations and diagnostics in loss function ... yet!")
+        NormPredictor = StackedInputsResidualsDeviations
+        kwargs["deviation_stddev_by_level"]=emulator.stacked_norm["deviation_stddev"],
+
+    predictor = NormPredictor(
+        predictor,
+        diffs_stddev_by_level=emulator.stacked_norm["stddiff"],
+        mean_by_level=emulator.stacked_norm["mean"],
+        stddev_by_level=emulator.stacked_norm["std"],
+        last_input_channel_mapping=last_input_channel_mapping,
+        **kwargs,
+    )
     # multi step rollout is not implemented yet
     return predictor
 

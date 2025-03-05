@@ -25,6 +25,7 @@ class BaseGEFSEmulator(GEFSForecastEmulator):
         "mean": f"{_scratch}/gefs/one-degree/statistics/mean_by_level.zarr",
         "std": f"{_scratch}/gefs/one-degree/statistics/stddev_by_level.zarr",
         "stddiff": f"{_scratch}/gefs/one-degree/statistics/diffs_stddev_by_level.zarr",
+        "deviation_stddev": f"{_scratch}/gefs/one-degree/statistics/deviation_stddev_by_level.zarr",
     }
 
     local_store_path = None
