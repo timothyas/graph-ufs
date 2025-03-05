@@ -42,27 +42,25 @@ def main(varname):
 
 def submit_slurm_job(name, varlist):
 
-    logdir = f"{_scratch}/gefs/one-degree/statistics/slurm/statistics"
+    logdir = f"{_scratch}/gefs/one-degree/slurm/statistics"
     scriptdir = f"./job-scripts"
     for d in [logdir, scriptdir]:
         if not os.path.isdir(d):
             os.makedirs(d)
 
     if name == "surface":
-        time = "06:00:00"
-        n_tasks = 6
+        time = "03:00:00"
 
     else:
         time = "12:00:00"
-        n_tasks = 3
 
     jobscript = f"#!/bin/bash\n\n"+\
         f"#SBATCH -J {name}_stats\n"+\
         f"#SBATCH -o {logdir}/{name}.%j.out\n"+\
         f"#SBATCH -e {logdir}/{name}.%j.err\n"+\
         f"#SBATCH --nodes=1\n"+\
-        f"#SBATCH --ntasks={n_tasks}\n"+\
-        f"#SBATCH --cpus-per-task=30\n"+\
+        f"#SBATCH --ntasks=4\n"+\
+        f"#SBATCH --cpus-per-task=64\n"+\
         f"#SBATCH --qos=regular\n"+\
         f"#SBATCH --account=m4718\n"+\
         f"#SBATCH --constraint=cpu\n"+\
@@ -102,7 +100,7 @@ if __name__ == "__main__":
         ],
         "dynamics": [
             # 3D Variables
-            "gh"
+            "gh",
             "u",
             "v",
             "w",

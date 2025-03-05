@@ -120,6 +120,11 @@ class StatisticsComputer:
             self.calc_diffs_stddev_by_level(ds)
             logging.info("Done computing diff stddev")
 
+        if "member" in ds.dims:
+            logging.info("Computing ensemble member deviation stddev")
+            self.calc_deviation_stddev_by_level(ds)
+            logging.info("Done computing ensemble member deviation stddev")
+
         walltime.stop("Total Walltime")
 
     def open_dataset(self, data_vars=None, diagnostics=None, **tisr_kwargs):
@@ -176,6 +181,39 @@ class StatisticsComputer:
             rds = xds.sel(time=slice(self.start_date, self.end_date))
             rds = rds.isel(time=slice(None, None, self.time_skip))
         return rds
+
+    def calc_deviation_stddev_by_level(self, xds):
+        """Computes the standard deviation of ensemble member differences by level and stores the result in a Zarr file.
+
+        Args:
+            xds (xarray.Dataset): Input dataset.
+
+        Returns:
+            xarray.Dataset: Result dataset with standard deviation of member differences by vertical level.
+        """
+
+        result = xr.Dataset()
+        member_varying_vars = [key for key in xds.data_vars if "member" in xds[key].dims]
+        for key in member_varying_vars:
+            result[key] = self._local_op(
+                xds[key],
+                opstr="deviation_stddev",
+                description=f"standard deviation of ensemble member pair difference over ",
+            )
+
+        result = self._add_coords(result, xds)
+
+        this_path_out = os.path.join(
+            self.path_out,
+            f"deviation_stddev_by_level.zarr",
+        )
+        if self.rename is not None:
+            for key, val in self.rename.items():
+                if val in result:
+                    result = result.rename({val: key})
+        result.to_zarr(this_path_out, **self.to_zarr_kwargs)
+        logging.info(f"Stored result: {this_path_out}")
+        return result
 
     def calc_diffs_stddev_by_level(self, xds):
         """Computes the standard deviation of differences by level and stores the result in a Zarr file.
@@ -285,6 +323,8 @@ class StatisticsComputer:
                 result = xda.std(dims)
             elif opstr == "diffs_stddev":
                 result = xda.diff("time").std(dims)
+            elif opstr == "deviation_stddev":
+                result = xda.diff("member").std(dims)
 
         result.attrs["description"] = description+str(dims)
         if "time" in xda.dims:
