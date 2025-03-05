@@ -782,7 +782,7 @@ class ReplayEmulator:
                 xds.to_zarr(local_path)
             return xds
 
-        for key in self.norm.keys():
+        for key in self.norm_urls.keys():
             self.norm[key] = open_normalization(key)
 
     def set_stacked_normalization(self):
@@ -863,7 +863,13 @@ class ReplayEmulator:
             return dataset_to_stacked(norms, **kwargs)
 
         input_norms = stackit(xds, self.input_variables, n_time=self.n_input, **kwargs)
-        forcing_norms = stackit(xds, self.forcing_variables, n_time=self.n_target, **kwargs)
+        try:
+            forcing_norms = stackit(xds, self.forcing_variables, n_time=self.n_target, **kwargs)
+        except IndexError:
+            # this happens for Deviation loss, where the dataset has no forcing terms
+            # this is a bit of a sloppy way to do this, since we only really need the target
+            # variables anyway, but this reduces code changes...
+            forcing_norms = xr.DataArray()
         target_norms = stackit(xds, self.target_variables, n_time=self.n_target, **kwargs)
         if self.diagnostics is not None:
             diagnostic_norms = stackit(xds, self.diagnostics, n_time=self.n_target, **kwargs)
@@ -881,6 +887,11 @@ class ReplayEmulator:
 
 
     def calc_loss_weights(self, gds):
+        """
+        Returns:
+            dict[Array]: {"forecast_mse": loss_weights_array}
+                returning a dict allows flexibility for other emulators to use multi-term loss functions
+        """
 
         # get arrays for shapes and sizes
         xinputs, xtargets, _ = gds.get_xarrays(0)
@@ -969,7 +980,7 @@ class ReplayEmulator:
                     ilevel = output_meta[ichannel]["level"]
                     weights[..., ichannel] *= level_weights.isel(level=ilevel).data
 
-        return weights
+        return {"forecast_mse": weights}
 
 
 

@@ -104,7 +104,7 @@ def optimize(
     emulator,
     trainer,
     validator,
-    weights,
+    loss_weights,
     last_input_channel_mapping,
     opt_state=None,
     diagnostic_mappings=None,
@@ -143,8 +143,8 @@ def optimize(
         a batch of losses will be returned
         """
         predictor = construct_wrapped_graphcast(emulator, last_input_channel_mapping, diagnostic_mappings=diagnostic_mappings)
-        loss, diagnostics = predictor.loss(inputs, targets, weights=weights)
-        return loss.squeeze(), diagnostics.squeeze()
+        loss, diagnostics = predictor.loss(inputs, targets, loss_weights=loss_weights)
+        return loss.squeeze(), tree_util.tree_map(lambda x: x.squeeze(), diagnostics)
 
 
 
@@ -152,10 +152,15 @@ def optimize(
     def batch_loss_fn(inputs, targets):
         """Note that this is only valid for a single sample, and if a batch of samples is passed,
         a batch of losses will be returned
+
+        Returns:
+            loss (scalar)
+            loss_by_channel (dict[Array]) : e.g. {"forecast_mse": [forecast_mse_loss_by_channel]}
         """
         predictor = construct_wrapped_graphcast(emulator, last_input_channel_mapping, diagnostic_mappings=diagnostic_mappings)
-        loss, diagnostics = predictor.loss(inputs, targets, weights=weights)
-        return loss.mean(), diagnostics.mean(axis=0)
+        loss, diagnostics = predictor.loss(inputs, targets, loss_weights=loss_weights)
+        return loss.mean(), tree_util.tree_map(lambda x: x.mean(axis=0), diagnostics)
+
 
     def optim_step(
         params,
@@ -202,7 +207,7 @@ def optimize(
                 else:
                     loss += local_loss / batch_size
                     add_trees(grads, local_grads)
-                    diagnostics += local_diagnostics / batch_size
+                    add_trees(diagnostics, local_diagnostics)
                     add_trees(next_state, local_next_state)
 
             return (loss, (diagnostics, next_state)), grads
@@ -220,7 +225,7 @@ def optimize(
     params = jax.device_put(params, all_gpus)
     state = jax.device_put(state, all_gpus)
     opt_state = jax.device_put(opt_state, all_gpus)
-    weights = jax.device_put(weights, all_gpus)
+    loss_weights = jax.device_put(loss_weights, all_gpus)
     last_input_channel_mapping = jax.device_put(last_input_channel_mapping, all_gpus)
 
 
@@ -283,13 +288,13 @@ def optimize(
     gradient_norms = []
     lr = np.nan
     g_norm = np.nan
-    loss_by_channel = []
+    loss_by_channel = {key: [] for key in loss_weights.keys()}
     n_steps = len(trainer)
 
     params = jax.device_put(params, all_gpus)
     state = jax.device_put(state, all_gpus)
     opt_state = jax.device_put(opt_state, all_gpus)
-    weights = jax.device_put(weights, all_gpus)
+    loss_weights = jax.device_put(loss_weights, all_gpus)
     last_input_channel_mapping = jax.device_put(last_input_channel_mapping, all_gpus)
 
     input_batch = optimize.input_batch
@@ -314,7 +319,8 @@ def optimize(
         # update progress bar from rank 0
         optim_steps.append(k)
         loss_values.append(loss)
-        loss_by_channel.append(diagnostics)
+        for key in loss_by_channel.keys():
+            loss_by_channel[key].append(diagnostics[key])
         msg = f"loss = {loss:.5f}"
         try:
             g_norm = opt_state[0].inner_state["g_norm"]
@@ -338,7 +344,7 @@ def optimize(
 
     # validation
     loss_valid_values = []
-    loss_by_channel_valid = []
+    loss_by_channel_valid = {key: [] for key in loss_weights.keys()}
     n_steps_valid = len(validator)
     progress_bar = tqdm(total=n_steps_valid, ncols=100, desc="Processing")
     for input_batch, target_batch in validator:
@@ -354,7 +360,8 @@ def optimize(
             rng=PRNGKey(0),
         )
         loss_valid_values.append(loss_valid)
-        loss_by_channel_valid.append(diagnostics_valid)
+        for key in loss_by_channel_valid.keys():
+            loss_by_channel_valid[key].append(diagnostics_valid[key])
         progress_bar.set_description(
             f"validation loss = {loss_valid:.5f}"
         )
@@ -397,7 +404,6 @@ def store_loss(
     learning_rates,
     gradient_norms,
     mean_grad,
-
 ):
 
     loss_ds = xr.Dataset()
@@ -409,10 +415,19 @@ def store_loss(
         previous_optim_steps = len(stored_loss_ds.optim_step)
         previous_epochs = len(stored_loss_ds["epoch"])
 
-    n_channels = len(loss_by_channel[0])
-    loss_by_channel = np.vstack(loss_by_channel)
-    loss_by_channel_valid = np.vstack(loss_by_channel_valid).mean(axis=0, keepdims=True)
+    # loss_by_channel is a dict, where each key describes the loss term, and each value
+    # is an array with the loss_by_channel for that term, of size [n_optim_steps, n_channels]
+    # here we create an array with the loss terms, and flatten the dictionary into an array
+    # with the shape: n_loss_terms, n_optim_steps, n_channels]
+    # and let xarray handle the loss_terms dimension labeling
+    loss_terms = list(loss_by_channel.keys())
+    loss_by_channel_array = np.stack([arr for arr in loss_by_channel.values()])
+    loss_by_channel_valid_array = np.stack([arr for arr in loss_by_channel_valid.values()])
+    # for validation, take average over optim_steps, keep epoch axis so array size is
+    # [n_loss_terms, n_epochs=1, n_channels]
+    loss_by_channel_valid_array = loss_by_channel_valid_array.mean(axis=1, keepdims=True)
 
+    n_channels = loss_by_channel_array.shape[-1]
     loss_ds["optim_step"] = [x + previous_optim_steps for x in optim_steps]
     loss_ds["epoch"] = [1 + previous_epochs]
     loss_ds.attrs["batch_size"] = emulator.batch_size
@@ -421,6 +436,11 @@ def store_loss(
         coords={"channel": np.arange(n_channels)},
         dims=("channel",),
     )
+    loss_ds["loss_terms"] = xr.DataArray(
+        loss_terms,
+        coords={"loss_terms": loss_terms},
+        dims="loss_terms",
+    )
     loss_ds["loss"] = xr.DataArray(
         loss_values,
         coords={"optim_step": loss_ds["optim_step"]},
@@ -428,12 +448,12 @@ def store_loss(
         attrs={"long_name": "loss function value"},
     )
     loss_ds["loss_by_channel"] = xr.DataArray(
-        loss_by_channel,
-        dims=("optim_step", "channel"),
+        loss_by_channel_array,
+        dims=("loss_terms", "optim_step", "channel"),
     )
     loss_ds["loss_by_channel_valid"] = xr.DataArray(
-        loss_by_channel_valid,
-        dims=("epoch", "channel"),
+        loss_by_channel_valid_array,
+        dims=("loss_terms", "epoch", "channel"),
     )
     loss_ds["loss_avg"] = xr.DataArray(
         [np.mean(loss_values)],

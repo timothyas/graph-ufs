@@ -256,6 +256,8 @@ class GEFSDeviationEmulator(GEFSForecastEmulator):
         "stddiff": "",
         "deviation_stddev": "",
     }
+    forecast_loss_weight = 0.5 # weight of the total forecast component, so each forecast is weighted half of this.
+    deviation_loss_weight = 0.5
     possible_stacked_dims = ("batch", "member", "lat", "lon", "channels")
 
     @property
@@ -271,6 +273,25 @@ class GEFSDeviationEmulator(GEFSForecastEmulator):
     @property
     def input_overlap(self):
         return dict()
+
+    def calc_loss_weights(self, gds):
+        loss_weights = super().calc_loss_weights(gds)
+
+        assert self.forecast_loss_weight + self.deviation_loss_weight == 1, \
+            f"{self.name}.calc_loss_weights: forecast_loss_weight={self.forecast_loss_weight} & deviation_loss_weight={self.deviation_loss_weight}, but they should sum to 1"
+
+        individual_fcst_weight = .5*self.forecast_loss_weight
+        msg = f"{self.name}.calc_loss_weights: Weighting deviation loss function as follows:\n"
+        msg += "\t Loss = Forecast_MSE_1 + Forecast_MSE_2 + Deviation_MSE\n"
+        msg += "\tForecast_MSE_1 = {individual_fcst_weight}\n"
+        msg += "\tForecast_MSE_2 = {individual_fcst_weight}\n"
+        msg += "\Deviation_MSE = {self.deviation_loss_weight}\n"
+        logging.info(msg)
+
+        return {
+            "forecast_mse": individual_fcst_weight * loss_weights["forecast_mse"],
+            "deviation_mse": self.deviation_loss_weight * loss_weights["forecast_mse"],
+        }
 
 
 tree_util.register_pytree_node(

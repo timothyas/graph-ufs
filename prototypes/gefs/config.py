@@ -112,6 +112,8 @@ class BaseGEFSEmulator(GEFSForecastEmulator):
     radius_query_fraction_edge_length = 0.6
 
     # loss weighting
+    forecast_loss_weight = 0.5
+    deviation_loss_weight = 0.5
     weight_loss_per_channel = True
     weight_loss_per_latitude = True
     weight_loss_per_level = False

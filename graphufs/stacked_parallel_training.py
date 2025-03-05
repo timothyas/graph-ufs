@@ -36,7 +36,7 @@ def optimize(
     emulator,
     trainer,
     validator,
-    weights,
+    loss_weights,
     last_input_channel_mapping,
     opt_state=None,
     diagnostic_mappings=None,
@@ -69,23 +69,19 @@ def optimize(
     if use_jax_distributed:
         raise NotImplementedError
 
-    @hk.transform_with_state
-    def sample_loss_fn(inputs, targets):
-        """Note that this is only valid for a single sample, and if a batch of samples is passed,
-        a batch of losses will be returned
-        """
-        predictor = construct_wrapped_graphcast(emulator, last_input_channel_mapping, diagnostic_mappings=diagnostic_mappings)
-        return predictor.loss(inputs, targets, weights=weights)
-
 
     @hk.transform_with_state
     def batch_loss_fn(inputs, targets):
         """Note that this is only valid for a single sample, and if a batch of samples is passed,
         a batch of losses will be returned
+
+        Returns:
+            loss (scalar)
+            loss_by_channel (dict[Array]) : e.g. {"forecast_mse": [forecast_mse_loss_by_channel]}
         """
         predictor = construct_wrapped_graphcast(emulator, last_input_channel_mapping, diagnostic_mappings=diagnostic_mappings)
-        loss, diagnostics = predictor.loss(inputs, targets, weights=weights)
-        return loss.mean(), diagnostics.mean(axis=0)
+        loss, diagnostics = predictor.loss(inputs, targets, loss_weights=loss_weights)
+        return loss.mean(), tree_util.tree_map(lambda x: x.mean(axis=0), diagnostics)
 
     def optim_step(
         params,
@@ -135,7 +131,7 @@ def optimize(
     params = jax.device_put(params, all_gpus)
     state = jax.device_put(state, all_gpus)
     opt_state = jax.device_put(opt_state, all_gpus)
-    weights = jax.device_put(weights, all_gpus)
+    loss_weights = jax.device_put(loss_weights, all_gpus)
     last_input_channel_mapping = jax.device_put(last_input_channel_mapping, all_gpus)
 
 
@@ -198,13 +194,13 @@ def optimize(
     gradient_norms = []
     lr = np.nan
     g_norm = np.nan
-    loss_by_channel = []
+    loss_by_channel = {key: [] for key in loss_weights.keys()}
     n_steps = len(trainer)
 
     params = jax.device_put(params, all_gpus)
     state = jax.device_put(state, all_gpus)
     opt_state = jax.device_put(opt_state, all_gpus)
-    weights = jax.device_put(weights, all_gpus)
+    loss_weights = jax.device_put(loss_weights, all_gpus)
     last_input_channel_mapping = jax.device_put(last_input_channel_mapping, all_gpus)
 
     input_batch = optimize.input_batch
@@ -229,7 +225,8 @@ def optimize(
         # update progress bar from rank 0
         optim_steps.append(k)
         loss_values.append(loss)
-        loss_by_channel.append(diagnostics)
+        for key in loss_by_channel.keys():
+            loss_by_channel[key].append(diagnostics[key])
         msg = f"loss = {loss:.5f}"
         try:
             g_norm = opt_state[0].inner_state["g_norm"]
@@ -253,7 +250,7 @@ def optimize(
 
     # validation
     loss_valid_values = []
-    loss_by_channel_valid = []
+    loss_by_channel_valid = {key: [] for key in loss_weights.keys()}
     n_steps_valid = len(validator)
     progress_bar = tqdm(total=n_steps_valid, ncols=100, desc="Processing")
     for input_batch, target_batch in validator:
@@ -269,7 +266,8 @@ def optimize(
             rng=PRNGKey(0),
         )
         loss_valid_values.append(loss_valid)
-        loss_by_channel_valid.append(diagnostics_valid)
+        for key in loss_by_channel_valid.keys():
+            loss_by_channel_valid[key].append(diagnostics_valid[key])
         progress_bar.set_description(
             f"validation loss = {loss_valid:.5f}"
         )

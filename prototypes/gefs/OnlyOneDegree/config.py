@@ -18,7 +18,7 @@ class GEFSForecastPreprocessed(GEFSForecastTrainer):
     input_transforms = None
     output_transforms = None
 
-class GEFSDeviationTrainer(GEFSDeviationEmulator, BaseGEFSEmulator):
+class GEFSDeviationTrainer(BaseGEFSEmulator, GEFSDeviationEmulator):
 
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/deviation-training"
     num_epochs = 28
