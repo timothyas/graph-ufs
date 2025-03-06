@@ -1,4 +1,6 @@
 from math import ceil
+import itertools
+from typing import Sequence
 import numpy as np
 
 import logging
@@ -50,7 +52,7 @@ class BatchLoader():
         num_workers=0,
         max_queue_size=1,
         rng_seed=None,
-        sample_stride=None,
+        sample_stride=None, #TODO: rename this so that it's how many indices to skip just ICs by
         start=0,
     ):
 
@@ -64,7 +66,18 @@ class BatchLoader():
         self.sample_indices = list(int(idx) for idx in np.arange(len(self.dataset)))
         self.sample_stride = sample_stride
         if sample_stride is not None:
-            self.sample_indices = self.sample_indices[::sample_stride]
+            new_sample_indices = []
+            # this is e.g.
+            # 1 for replay and deterministic datasets
+            # n_members for ensemble datasets with no other extra dimensions other than "member"
+            # ... and this probably only works because of the dimension order
+            other_dims_size = int(np.prod([size for key, size in self.dataset.sample_sizes.items() if key != "time"]))
+            for initial_index in self.sample_indices[::other_dims_size*self.sample_stride]:
+                new_sample_indices.append(self.sample_indices[initial_index:initial_index+other_dims_size])
+
+            # flatten the list of lists
+            self.sample_indices = list(itertools.chain.from_iterable(new_sample_indices))
+
         self.rstate = np.random.RandomState(rng_seed)
 
         self.num_workers = num_workers
@@ -109,6 +122,10 @@ class BatchLoader():
     @property
     def name(self):
         return str(type(self).__name__)
+
+    @property
+    def sample_dims(self):
+        return self.dataset.sample_dims
 
     def __len__(self) -> int:
         n_samples = len(self.sample_indices)

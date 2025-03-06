@@ -1,6 +1,8 @@
 """
 Implementations of Torch Dataset and DataLoader
 """
+import logging
+import itertools
 from os.path import join
 from typing import Optional
 import numpy as np
@@ -52,6 +54,22 @@ class Dataset():
             preload_batch=preload_batch,
         )
 
+        # Now, create "sample_indices", which has a dict mapping to the dimensions that define each sample
+        # these will be equivalent to the dimensions in the sample generator that are not "full"
+        # for example, if each sample has len(time)=2 and len(member) = 1, then
+        # self.sample_generator[10] will have the same time and member dimensions as sample_indices[10]
+        # but the sample_generator version will (of course) have all the other dimensions
+        # like latitude, longitude etc, whereas sample_indices just has the dimensions we're looping over
+        #
+        # Ok, and note also that "sample_indices" just has the first item of each dimension, so when using
+        # it we'll need to take a slice that is self.input_dims large, starting with that initial index
+        for key, val in self.input_overlap.items():
+            if self.input_dims[key] - val > 1:
+                raise NotImplementedError(f"Dataset.__init__: will neeed to rework sample_indices creation when input_dim['{key}'] - input_overlap['{key}'] > 1. Right now it's {self.input_dims[key]} and {val}, respectively.")
+        self.sample_dims = tuple(key for key, val in self.input_dims.items() if val < len(xds[key]))
+        self.sample_sizes = {key: len(xds[key]) - self.input_overlap.get(key, 0) for key in self.sample_dims}
+
+
     def __len__(self) -> int:
         """
         Returns the number of sample forecasts in the dataset
@@ -101,8 +119,8 @@ class Dataset():
 
     @property
     def initial_times(self) -> list[np.datetime64]:
-        """Returns dates of all initial conditions"""
-        return [self.xds["time"].values[i + self.emulator.n_input - 1] for i in range(len(self))]
+        """Returns unique list of all initial conditions, i.e. not repeating it for each sample if multiple data samples have the sample initial condition timestamp"""
+        return [self.xds["time"].values[i + self.emulator.n_input - 1] for i in range(self.sample_sizes["time"])]
 
     @property
     def possible_stacked_dims(self) -> tuple[str]:

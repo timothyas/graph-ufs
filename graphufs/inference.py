@@ -21,20 +21,38 @@ def swap_batch_time_dims(xds, inittimes):
     return xds
 
 
-def store_container(path, xds, time, **kwargs):
+def store_container(path, xds, loader, **kwargs):
 
-    if "time" in xds:
-        xds = xds.isel(time=0, drop=True)
+    time = loader.initial_times
+
+    # we're just getting a single sample, which may have only a slice of
+    # other dimensions (e.g. just one ensemble member)
+    # need to keep track of these so that we create the whole array just like time
+
+    full_arrays_of_sample_dims = {
+        "time": loader.initial_times # this one is special, because of how we subsample it with sample_stride
+    }
+    # others we can pull directly from the dataset
+    original_dims = {key: xds[key].dims for key in xds.data_vars}
+    for key in loader.sample_dims:
+        if key != "time":
+            full_arrays_of_sample_dims[key] = loader.xds[key]
+        if key in xds:
+            xds = xds.isel({key: 0}, drop=True)
 
     container = xr.Dataset()
     for key in xds.coords:
         container[key] = xds[key].copy()
 
     for key in xds.data_vars:
-        dims = ("time",) + xds[key].dims
-        coords = {"time": time, **dict(xds[key].coords)}
-        shape = (len(time),) + xds[key].shape
-        chunks = (1,) + tuple(-1 for _ in xds[key].dims)
+        og = original_dims[key]
+        local_sample_dims = tuple(dim for dim in loader.sample_dims if dim in og)
+        dims = local_sample_dims + xds[key].dims
+
+        local_sample_coords = {dim: full_arrays_of_sample_dims[dim] for dim in local_sample_dims}
+        coords = {**local_sample_coords, **dict(xds[key].coords)}
+        shape = tuple(len(x) for x in local_sample_coords.values()) + xds[key].shape
+        chunks = tuple(1 for _ in local_sample_dims) + tuple(-1 for _ in xds[key].dims)
 
         container[key] = xr.DataArray(
             data=dask.array.zeros(
