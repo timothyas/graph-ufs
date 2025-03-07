@@ -68,9 +68,6 @@ class GEFSForecastEmulator(ReplayEmulator):
         if self.input_duration != "6h":
             raise NotImplementedError(f"{self.name}.__init__: it's unclear how to get two consistent timesteps with GEFS, also consider the missing dates!")
 
-        if self.target_lead_time != "6h":
-            logging.warning(f"{self.name}.__init__: it's unclear how target_lead_time != 6h will work")
-
         self.mpi_rank = mpi_rank
         self.mpi_size = mpi_size
 
@@ -121,9 +118,6 @@ class GEFSForecastEmulator(ReplayEmulator):
         if self.delta_t != pd.Timedelta(hours=6):
             raise NotImplementedError(f"{self.name}.__init__: delta_t=6h only so far")
 
-        if self.forecast_duration != pd.Timedelta(hours=6):
-            raise NotImplementedError(f"{self.name}.__init__: forecast_duration=6h only so far")
-
         # set normalization here so that we can jit compile with this class
         # a bit annoying, have to copy datatypes here to avoid the Ghost Bus problem
         self.norm_urls = self.norm_urls.copy()
@@ -136,17 +130,47 @@ class GEFSForecastEmulator(ReplayEmulator):
         if self.tisr_integration_period is None:
             self.tisr_integration_period = self.delta_t
 
+    def subsample_dataset(self, xds, new_time=None):
+        """Get the subset of the data that we want in terms of time, vertical levels, and variables
+
+        Note:
+            This is the EXACT same as for the replay emulator, except that it only subsamples the time
+            via the bounds, not via the frequency of the "new_time" argument.
+            The reason is that we are pulling a forecast dataset, which could have initial conditions at
+            any frequency (e.g. just once a day, once a month, whatever)
+            but have a separate "fhr" dimension that is the frequency of the model.
+
+        Args:
+            xds (xarray.Dataset): with replay data
+            new_time (pandas.Daterange or similar, optional): time vector to select from the dataset
+
+        Returns:
+            newds (xarray.Dataset): subsampled/subset that we care about
+        """
+
+        # only grab variables we care about
+        myvars = list(x for x in self.all_variables if x in xds)
+        xds = xds[myvars]
+
+        if new_time is not None:
+            xds = xds.sel({self.dim_names["time"]: slice(new_time[0], new_time[-1])})
+
+        # select our vertical levels
+        xds = xds.sel({self.dim_names["level"]: self.levels})
+
+        # if we have any transforms to apply, do it here
+        xds = self.transform_variables(xds)
+        return xds
+
     def extract_inputs_targets_forcings(self, sample, drop_datetime=True, drop_original_member=False, **tisr_kwargs):
         """This should mirror graphcast.data_utils.extract_inputs_targets_forcings,
         except that this sample is very easy to get the inputs and targets from... I think
         """
 
         # First, make "time" and "member" consistent quantities among samples
-        # rename time to t0, and make time relative to last initial condition
-        sample = sample.rename({"time": "t0"})
-        sample["time"] = sample["t0"] - sample["t0"][self.n_input-1] # should always be 0 with single IC, but whatever
-        sample = sample.swap_dims({"t0": "time"})
-        sample = sample.set_coords("t0")
+        # rename time back to t0, time used here is actually lead_time
+        sample = sample.rename({"time": "t0", "lead_time": "time"})
+        sample = sample.swap_dims({"fhr": "time"})
 
         # Rename member to original_member
         # In forecast case, it's always 0
@@ -166,27 +190,32 @@ class GEFSForecastEmulator(ReplayEmulator):
             tisr = xr.concat(
                 [
                     solar_radiation.get_toa_incident_solar_radiation_for_xarray(
-                        data_array_like=sample.sel(fhr=fhr),
+                        data_array_like=sample.sel(time=lead_time),
                         **tisr_kwargs,
-                    ).expand_dims({"fhr": [fhr]})
-                    for fhr in sample.fhr.values
+                    ).expand_dims({"time": [lead_time]})
+                    for lead_time in sample.time.values
                 ],
-                dim="fhr",
+                dim="time",
             )
             sample["toa_incident_solar_radiation"] = tisr
 
         if drop_datetime:
             sample = sample.drop_vars("datetime")
 
+        # always squeeze out the t0 dim
+        sample = sample.squeeze("t0", drop=True)
+        sample = sample.drop_vars("fhr")
+
         # inputs will only come from data at fhr=0
-        inputs = sample.sel(fhr=0, drop=True)
+        inputs = sample.sel(time=[pd.Timedelta(0)])
         inputs = inputs[[v for v in self.input_variables]]
 
-        # Get all leads times
+        # Get target lead times
         leads = self.target_lead_time
         leads = [leads] if isinstance(leads, str) else leads
-        fhrs = [int(pd.Timedelta(lead).value / 1e9 / 3600) for lead in leads]
-        targets = sample.sel(fhr=fhrs).squeeze(dim="fhr", drop=True)
+        leads = [pd.Timedelta(lead) for lead in leads]
+
+        targets = sample.sel(time=leads)
         forcings = targets[[v for v in self.forcing_variables]]
         targets = targets[[v for v in self.target_variables]]
         if drop_original_member:

@@ -8,6 +8,7 @@ from prototypes.gefs.config import BaseGEFSEmulator, _scratch
 class GEFSForecastTrainer(BaseGEFSEmulator):
 
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/forecast-training"
+    num_epochs = 64
     peak_lr = 1e-3
 
 class GEFSForecastPreprocessor(GEFSForecastTrainer):
@@ -23,7 +24,6 @@ class GEFSDeviationTrainer(BaseGEFSEmulator, GEFSDeviationEmulator):
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/deviation-training"
     num_epochs = 28
     peak_lr = 1e-4
-    batch_size = 8
 
 class GEFSDeviationPreprocessor(GEFSDeviationTrainer):
 
@@ -33,12 +33,24 @@ class GEFSDeviationPreprocessed(GEFSDeviationTrainer):
     input_transforms = None
     output_transforms = None
 
-class GEFSEvaluator(GEFSForecastTrainer):
+class GEFSForecastEvaluator(GEFSForecastTrainer):
+
+    data_url = f"{_scratch}/gefs/one-degree/forecasts.validation.zarr"
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
-    target_lead_time = [f"{n}h" for n in range(3, 3*8*10+1, 3)]
-    sample_stride = 9
+    target_lead_time = [f"{n}h" for n in range(6, 6*4*10+1, 6)]
     evaluation_checkpoint_id = 64
-    batch_size = 32
+
+class GEFSDeviationEvaluator(GEFSForecastTrainer):
+    """Note that this one we want to inherit from the regular class,
+    so that Dataset samples are built as we would expect...
+    That may change if we want to look at evaluating deviations, but later...
+    """
+
+    data_url = f"{_scratch}/gefs/one-degree/forecasts.validation.zarr"
+    local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/deviation-training"
+    wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
+    target_lead_time = [f"{n}h" for n in range(6, 6*4*10+1, 6)]
+    evaluation_checkpoint_id = 28
 
 
 tree_util.register_pytree_node(
@@ -78,7 +90,13 @@ tree_util.register_pytree_node(
 )
 
 tree_util.register_pytree_node(
-    GEFSEvaluator,
-    GEFSEvaluator._tree_flatten,
-    GEFSEvaluator._tree_unflatten
+    GEFSForecastEvaluator,
+    GEFSForecastEvaluator._tree_flatten,
+    GEFSForecastEvaluator._tree_unflatten
+)
+
+tree_util.register_pytree_node(
+    GEFSDeviationEvaluator,
+    GEFSDeviationEvaluator._tree_flatten,
+    GEFSDeviationEvaluator._tree_unflatten
 )
