@@ -15,7 +15,7 @@ from graphufs.stacked_mpi_training import (
 from graphufs.optim import clipped_cosine_adamw
 from graphufs import utils
 
-def train(RemoteEmulator, PackedEmulator, cfg=None):
+def train(RemoteEmulator, PackedEmulator, missing_samples=None, cfg=None):
     """
 
     Args:
@@ -37,7 +37,7 @@ def train(RemoteEmulator, PackedEmulator, cfg=None):
 
     # data generators
     tds = Dataset(remote_emulator, mode="training")
-    training_data = TSPackedDataset(emulator, mode="training")
+    training_data = TSPackedDataset(emulator, mode="training", missing_samples=missing_samples)
     validation_data = TSPackedDataset(emulator, mode="validation")
 
     trainer = TSBatchLoader(
