@@ -52,7 +52,7 @@ class BatchLoader():
         num_workers=0,
         max_queue_size=1,
         rng_seed=None,
-        sample_stride=None, #TODO: rename this so that it's how many indices to skip just ICs by
+        initial_condition_stride=None,
         start=0,
     ):
 
@@ -64,15 +64,15 @@ class BatchLoader():
         self.data_counter = start
 
         self.sample_indices = list(int(idx) for idx in np.arange(len(self.dataset)))
-        self.sample_stride = sample_stride
-        if sample_stride is not None:
+        self.initial_condition_stride = initial_condition_stride
+        if initial_condition_stride is not None:
             new_sample_indices = []
             # this is e.g.
             # 1 for replay and deterministic datasets
             # n_members for ensemble datasets with no other extra dimensions other than "member"
             # ... and this probably only works because of the dimension order
             other_dims_size = int(np.prod([size for key, size in self.dataset.sample_sizes.items() if key != "time"]))
-            for initial_index in self.sample_indices[::other_dims_size*self.sample_stride]:
+            for initial_index in self.sample_indices[::other_dims_size*self.initial_condition_stride]:
                 new_sample_indices.append(self.sample_indices[initial_index:initial_index+other_dims_size])
 
             # flatten the list of lists
@@ -101,7 +101,7 @@ class BatchLoader():
     @property
     def initial_times(self) -> list[np.datetime64]:
         """Returns dates of all initial conditions"""
-        return self.dataset.initial_times[::self.sample_stride]
+        return self.dataset.initial_times[::self.initial_condition_stride]
 
     @property
     def mode(self):
@@ -317,7 +317,7 @@ class MPIBatchLoader(BatchLoader):
         num_workers=0,
         max_queue_size=1,
         rng_seed=None,
-        sample_stride=None,
+        initial_condition_stride=None,
         start=0,
     ):
         assert _has_mpi, f"{self.name}.__init__: Unable to import mpi4py or mpi4jax, cannot use this class"
@@ -333,7 +333,7 @@ class MPIBatchLoader(BatchLoader):
             num_workers=num_workers,
             max_queue_size=max_queue_size,
             rng_seed=rng_seed,
-            sample_stride=sample_stride,
+            initial_condition_stride=initial_condition_stride,
             start=start,
         )
         logging.info(str(self))

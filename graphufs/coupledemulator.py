@@ -95,7 +95,7 @@ class ReplayCoupledEmulator:
     use_preprocessed = None         # use pre-processed dataset
 
     # evaluation
-    sample_stride = 1               # skip over initial conditions during evaluation by this stride
+    initial_condition_stride = 1               # skip over initial conditions during evaluation by this stride
     evaluation_checkpoint_id = None # checkpoint used in evaluation scripts
 
     # others

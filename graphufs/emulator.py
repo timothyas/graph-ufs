@@ -89,7 +89,7 @@ class ReplayEmulator:
     use_half_precision = True       # if True (default) cast inputs/outputs to/from half precision
 
     # evaluation
-    sample_stride = 1               # skip over initial conditions during evaluation by this stride
+    initial_condition_stride = 1               # skip over initial conditions during evaluation by this stride
     evaluation_checkpoint_id = None # checkpoint used in evaluation scripts
 
     # others

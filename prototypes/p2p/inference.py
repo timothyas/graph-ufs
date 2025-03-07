@@ -155,7 +155,7 @@ def inference(Emulator):
         drop_last=False,
         num_workers=0,
         max_queue_size=1,
-        sample_stride=emulator.sample_stride,
+        initial_condition_stride=emulator.initial_condition_stride,
         mpi_topo=topo,
     )
     assert validator.data_per_device == 1

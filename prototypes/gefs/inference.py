@@ -54,7 +54,6 @@ def predict(
 
     hours = int(emulator.forecast_duration.value / 1e9 / 3600)
     pname = f"{emulator.local_store_path}/inference/{batchloader.dataset.mode}/graphufs.{hours}h.zarr"
-    tname = f"{emulator.local_store_path}/inference/{batchloader.dataset.mode}/replay.{hours}h.zarr"
 
     n_steps = len(batchloader)
     with open(mpi_topo.progress_file, "a") as f:
@@ -85,21 +84,17 @@ def predict(
                 for key, mapping in emulator.output_transforms.items():
                     with xr.set_options(keep_attrs=True):
                         predictions[key] = mapping(predictions[key])
-                        targets[key] = mapping(targets[key])
 
                 # now check for static variables, we don't want these in the resulting datasets
                 predictions = predictions[[key for key in list(predictions.coords)+list(predictions.data_vars) if key not in _static_vars]]
-                targets = targets[[key for key in list(targets.coords)+list(targets.data_vars) if key not in _static_vars]]
                 # Add t0 as new variable, and swap out for logical sample/batch index
                 # swap dims to be [time (aka initial condition time), lead_time (aka forecast_time), level, lat, lon]
                 predictions = swap_batch_time_dims(predictions, inittimes)
-                targets = swap_batch_time_dims(targets, inittimes)
 
                 # Store to zarr one batch at a time
                 if k == 0:
                     if mpi_topo.is_root:
                         store_container(pname, predictions, loader=batchloader, mode="w")
-                        store_container(tname, targets, loader=batchloader, mode="w")
                     mpi_topo.comm.Barrier()
 
                 # Store to zarr
@@ -114,7 +109,6 @@ def predict(
                     **spatial_region,
                 }
                 predictions.to_zarr(pname, region=region)
-                targets.to_zarr(tname, region=region)
 
             progress_bar.update()
         progress_bar.close()
@@ -138,7 +132,7 @@ def inference(Emulator):
         drop_last=False,
         num_workers=0,
         max_queue_size=1,
-        sample_stride=emulator.sample_stride,
+        initial_condition_stride=emulator.initial_condition_stride,
         mpi_topo=topo,
     )
     assert validator.data_per_device == 1

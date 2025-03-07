@@ -30,7 +30,7 @@ def store_container(path, xds, loader, **kwargs):
     # need to keep track of these so that we create the whole array just like time
 
     full_arrays_of_sample_dims = {
-        "time": loader.initial_times # this one is special, because of how we subsample it with sample_stride
+        "time": loader.initial_times # this one is special, because of how we subsample it with initial_condition_stride
     }
     # others we can pull directly from the dataset
     original_dims = {key: xds[key].dims for key in xds.data_vars}

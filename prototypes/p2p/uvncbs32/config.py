@@ -21,7 +21,7 @@ class P2PPreprocessed(P2PTrainer):
 class P2PEvaluator(P2PTrainer):
     wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
     target_lead_time = [f"{n}h" for n in range(3, 3*8*10+1, 3)]
-    sample_stride = 9
+    initial_condition_stride = 9
     evaluation_checkpoint_id = 128
 
 
