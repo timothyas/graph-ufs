@@ -48,7 +48,7 @@ def get_valid_initial_conditions(forecast, truth):
         valid_time = list(set(truth["time"].values).intersection(set(forecast_valid_time.values.flatten())))
 
         initial_times = xr.where(
-            [t0 in valid_time and tf in valid_time for t0, tf in zip(
+            [t0+forecast["lead_time"].values[0] in valid_time and tf in valid_time for t0, tf in zip(
                 forecast.time.values,
                 forecast_valid_time.isel(lead_time=-1, drop=True).values
             )],
@@ -68,8 +68,12 @@ def get_valid_initial_conditions(forecast, truth):
     return initial_times
 
 
-def regrid_and_rename(xds, truth):
-    """Note that it's assumed the truth dataset is not on a Gaussian grid but input is"""
+def regrid_and_rename(xds, truth, is_gaussian=True):
+    """Note that it's assumed the truth dataset is not on a Gaussian grid,
+    is_gaussian option is for the input xds
+
+    These assumptions about gaussian-grid-ness should probably be changed!
+    """
 
     ds_out = create_output_dataset(
         lat=truth["latitude"].values,
@@ -78,7 +82,7 @@ def regrid_and_rename(xds, truth):
     )
     if "lat_b" not in xds and "lon_b" not in xds:
         logging.info(f"{__name__}.regrid_and_rename: did not find lat_b or lon_b in xds, computing bounds.")
-        xds = get_bounds(xds, is_gaussian=True)
+        xds = get_bounds(xds, is_gaussian=is_gaussian)
 
     regridder = xesmf.Regridder(
         ds_in=xds,
@@ -90,18 +94,30 @@ def regrid_and_rename(xds, truth):
 
     rename_dict = {
         "pressfc": "surface_pressure",
+        "sp": "surface_pressure",
         "ugrd10m": "10m_u_component_of_wind",
+        "u10": "10m_u_component_of_wind",
         "vgrd10m": "10m_v_component_of_wind",
+        "v10": "10m_v_component_of_wind",
         "tmp2m": "2m_temperature",
+        "t2m": "2m_temperature",
         "tmp": "temperature",
+        "t": "temperature",
         "ugrd": "u_component_of_wind",
+        "u": "u_component_of_wind",
         "vgrd": "v_component_of_wind",
+        "v": "v_component_of_wind",
         "dzdt": "vertical_velocity",
+        "w": "vertical_velocity",
         "spfh": "specific_humidity",
+        "q": "specific_humidity",
+        "spfh2m": "2m_specific_humidity",
+        "sh2": "2m_specific_humidity",
         "prateb_ave": "total_precipitation_3hr",
         "lat": "latitude",
         "lon": "longitude",
         "hydrostatic_geopotenital": "geopotential",
+        "gh": "geopotential",
     }
     for k, v in rename_dict.items():
         if k in ds_out:
