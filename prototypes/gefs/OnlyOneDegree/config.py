@@ -36,9 +36,8 @@ class GEFSDeviationPreprocessed(GEFSDeviationTrainer):
 class GEFSForecastEvaluator(GEFSForecastTrainer):
 
     data_url = f"{_scratch}/gefs/one-degree/forecasts.validation.zarr"
-    wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
+    wb2_obs_url = "gs://gcp-public-data-arco-era5/ar/1959-2022-1h-360x181_equiangular_with_poles_conservative.zarr"
     target_lead_time = [f"{n}h" for n in range(6, 6*4*10+1, 6)]
-    evaluation_checkpoint_id = 64
 
 class GEFSDeviationEvaluator(GEFSForecastTrainer):
     """Note that this one we want to inherit from the regular class,
@@ -48,9 +47,8 @@ class GEFSDeviationEvaluator(GEFSForecastTrainer):
 
     data_url = f"{_scratch}/gefs/one-degree/forecasts.validation.zarr"
     local_store_path = f"{_scratch}/graph-ufs/gefs/OnlyOneDegree/deviation-training"
-    wb2_obs_url = "gs://weatherbench2/datasets/era5/1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr"
+    wb2_obs_url = "gs://gcp-public-data-arco-era5/ar/1959-2022-1h-360x181_equiangular_with_poles_conservative.zarr"
     target_lead_time = [f"{n}h" for n in range(6, 6*4*10+1, 6)]
-    evaluation_checkpoint_id = 28
 
 
 tree_util.register_pytree_node(

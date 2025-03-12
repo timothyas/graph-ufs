@@ -20,7 +20,6 @@ def open_predictions_and_truth(emulator):
 
     # open graphufs, and targets as is
     gds = xr.open_zarr(f"{emulator.local_store_path}/inference/validation/graphufs.{duration}.zarr")
-    gds = gds.isel(time=slice(4))
 
     truth = xr.open_zarr(emulator.wb2_obs_url, storage_options={"token":"anon"})
 
@@ -54,37 +53,86 @@ def open_targets(emulator, predictions, truth):
 
 def postproc(emulator, xds, truth, name, plevels=(250, 500, 850)):
 
+    do_mean = "member" in xds.dims
+    if do_mean:
+        logging.info(f"Found 'member' in dimensions, will compute ensemble mean")
+
     logging.info(f"Selecting pressure levels {plevels} hPa...")
     pds = xds.sel(level=list(plevels))
 
+    if do_mean:
+        mds = pds.mean("member")
+
     # regrid and rename variables
     pds = regrid_and_rename(pds, truth, is_gaussian=False)
+    if do_mean:
+        mds = regrid_and_rename(mds, truth, is_gaussian=False)
     logging.info(f"Done forming regridding operations...")
 
     duration = emulator.target_lead_time[-1]
     path = f"{emulator.local_store_path}/inference/validation/{name}.{duration}.postprocessed.zarr"
     pds.to_zarr(path, mode="w")
     logging.info(f"Done writing to {path}")
+    if do_mean:
+        mpath = f"{emulator.local_store_path}/inference/validation/{name}-mean.{duration}.postprocessed.zarr"
+        mds.to_zarr(path, mode="w")
+        logging.info(f"Done writing to {mpath}")
+
+
+def compute_ensemble_mean(open_path, store_path, load_each_variable=True):
+
+    logging.info(f"Computing ensemble mean")
+    logging.info(f"\tReading from: {open_path}")
+    logging.info(f"\tStoring to: {store_path}")
+
+    xds = xr.open_zarr(open_path)
+
+    for key in xds.data_vars:
+        mds = xds[[key]]
+        with xr.set_options(keep_attrs=True):
+            mds = mds.mean("member") if "member" in mds.dims else mds
+        logging.info(f"\tLoading {key}")
+        mds.load()
+
+        logging.info(f"\t... chunking")
+        chunks = {k: val for k, val in xds[key].encoding["preferred_chunks"].items() if k in mds[key].dims}
+        mds[key] = mds[key].chunk(chunks)
+        mds[key].encoding["preferred_chunks"] = chunks
+        mds[key].encoding["chunks"] = tuple(chunks.values())
+
+        mds.to_zarr(
+            store_path,
+            mode="a",
+        )
+        logging.info(f"\t... done with {key}")
 
 
 def main(Emulator):
 
     setup_simple_log()
     emulator = Emulator()
+    duration = emulator.target_lead_time[-1]
     dask.config.set(scheduler="threads", num_workers=64)
 
+    compute_ensemble_mean(
+        f"{emulator.local_store_path}/inference/validation/graphufs.{duration}.zarr",
+        f"{emulator.local_store_path}/inference/validation/graphufs.ensemble-mean.{duration}.zarr",
+    )
 
-    logging.info("Opening Predictions")
-    gds, truth = open_predictions_and_truth(emulator)
+    # The workflow below works if regridding is necessary
+    # but since we can compare directly to a 1 degree ERA5, why do this?
+    # Just compute ensemble mean (above)
+    #logging.info("Opening Predictions")
+    #gds, truth = open_predictions_and_truth(emulator)
 
-    logging.info("Postprocessing Predictions")
-    postproc(emulator, gds, truth, name="graphufs")
-    logging.info("Done postprocessing predictions")
+    #logging.info("Postprocessing Predictions")
+    #postproc(emulator, gds, truth, name="graphufs")
+    #logging.info("Done postprocessing predictions")
 
-    logging.info("Opening GEFS")
-    rds = open_targets(emulator, gds, truth)
+    #logging.info("Opening GEFS")
+    #rds = open_targets(emulator, gds, truth)
 
-    logging.info("Postprocessing GEFS")
-    postproc(emulator, rds, truth, name="gefs")
+    #logging.info("Postprocessing GEFS")
+    #postproc(emulator, rds, truth, name="gefs")
 
     logging.info("Done with all postprocessing")
