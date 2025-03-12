@@ -2,7 +2,7 @@
 
 # Note that we have to have pip install --no-deps weatherbench2 as in the README
 
-output_dir=/pscratch/sd/t/timothys/graph-ufs/gefs/OnlyOneDegree/forecast-training/inference/validation
+output_dir=/pscratch/sd/t/timothys/graph-ufs/gefs/oodd_lr1em4/inference/validation
 wb2_dir=$COMMON/graph-ufs/weatherbench2
 gefs_path=/pscratch/sd/t/timothys/gefs/one-degree/forecasts.validation.zarr
 gefs_mean_path=/pscratch/sd/t/timothys/gefs/one-degree/ensemble-mean.validation.zarr
@@ -23,16 +23,10 @@ truth_paths=( \
 rename_variables='{"sp":"surface_pressure","u10":"10m_u_component_of_wind","v10":"10m_v_component_of_wind","t2m":"2m_temperature","t":"temperature","u":"u_component_of_wind","v":"v_component_of_wind","w":"vertical_velocity","q":"specific_humidity","sh2":"2m_specific_humidity","lat":"latitude","lon":"longitude","pressure":"level","gh":"geopotential","t0":"time"}'
 
 # Standard WB2 deterministic evaluation
-for dataset in "graphufs" "graphufs.ensemble-mean" "gefs" "gefs.ensemble-mean"
+for dataset in "graphufs" "graphufs.ensemble-mean"
 do
 
-    if [[ ${dataset} == "gefs" ]] ; then
-        forecast_path=$gefs_path
-    elif [[ ${dataset} == "gefs.ensemble-mean" ]] ; then
-        forecast_path=$gefs_mean_path
-    else
-        forecast_path=${output_dir}/${dataset}.${forecast_duration}.zarr
-    fi
+    forecast_path=${output_dir}/${dataset}.${forecast_duration}.zarr
 
     for i in "${!truth_names[@]}"
     do

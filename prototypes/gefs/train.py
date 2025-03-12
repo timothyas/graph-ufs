@@ -21,7 +21,7 @@ def train(RemoteEmulator, PackedEmulator, missing_samples=None, cfg=None):
     Args:
         RemoteEmulator, PackedEmulator (graphufs.Emulator)
         cfg (dict, optional): if provided, a dict with
-            topo, params, state, opt_state
+            params, state, opt_state
     """
 
     # initial setup
@@ -30,8 +30,8 @@ def train(RemoteEmulator, PackedEmulator, missing_samples=None, cfg=None):
         is_pickup = False
         cfg = dict()
         cfg["opt_state"] = None
-        cfg["topo"] = MPITopology(log_dir=f"{RemoteEmulator.local_store_path}/logs/training")
 
+    cfg["topo"] = MPITopology(log_dir=f"{RemoteEmulator.local_store_path}/logs/training")
     emulator = PackedEmulator(mpi_rank=cfg["topo"].rank, mpi_size=cfg["topo"].size)
     remote_emulator = RemoteEmulator(mpi_rank=cfg["topo"].rank, mpi_size=cfg["topo"].size)
 
