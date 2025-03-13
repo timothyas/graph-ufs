@@ -1,8 +1,13 @@
 #!/bin/bash
 
 # Note that we have to have pip install --no-deps weatherbench2 as in the README
+#
 
-output_dir=/pscratch/sd/t/timothys/graph-ufs/gefs/oodd_lr1em4/inference/validation
+project=gefs
+subproject=oodd_lr1em4
+ckpt_id=22
+
+output_dir=/pscratch/sd/t/timothys/graph-ufs/${project}/${subproject}/inference/c${ckpt_id}/validation
 wb2_dir=$COMMON/graph-ufs/weatherbench2
 gefs_path=/pscratch/sd/t/timothys/gefs/one-degree/forecasts.validation.zarr
 gefs_mean_path=/pscratch/sd/t/timothys/gefs/one-degree/ensemble-mean.validation.zarr
@@ -25,7 +30,6 @@ rename_variables='{"sp":"surface_pressure","u10":"10m_u_component_of_wind","v10"
 # Standard WB2 deterministic evaluation
 for dataset in "graphufs" "graphufs.ensemble-mean"
 do
-
     forecast_path=${output_dir}/${dataset}.${forecast_duration}.zarr
 
     for i in "${!truth_names[@]}"

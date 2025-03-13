@@ -1,8 +1,13 @@
 #!/bin/bash
 
 # Note that we have to have pip install --no-deps weatherbench2 as in the README
+#
 
-output_dir=/pscratch/sd/t/timothys/graph-ufs/gefs/oodf_lr1em4/inference/validation
+project=gefs
+subproject=oodf_lr1em4
+ckpt_id=18
+
+output_dir=/pscratch/sd/t/timothys/graph-ufs/${project}/${subproject}/inference/c${ckpt_id}/validation
 wb2_dir=$COMMON/graph-ufs/weatherbench2
 gefs_path=/pscratch/sd/t/timothys/gefs/one-degree/forecasts.validation.zarr
 gefs_mean_path=/pscratch/sd/t/timothys/gefs/one-degree/ensemble-mean.validation.zarr
