@@ -19,7 +19,7 @@ def open_predictions_and_truth(emulator):
     duration = emulator.target_lead_time[-1]
 
     # open graphufs, and targets as is
-    gds = xr.open_zarr(f"{emulator.local_store_path}/inference/validation/graphufs.{duration}.zarr")
+    gds = xr.open_zarr(f"{emulator.inference_directory}/validation/graphufs.{duration}.zarr")
 
     truth = xr.open_zarr(emulator.wb2_obs_url, storage_options={"token":"anon"})
 
@@ -70,11 +70,11 @@ def postproc(emulator, xds, truth, name, plevels=(250, 500, 850)):
     logging.info(f"Done forming regridding operations...")
 
     duration = emulator.target_lead_time[-1]
-    path = f"{emulator.local_store_path}/inference/validation/{name}.{duration}.postprocessed.zarr"
+    path = f"{emulator.inference_directory}/validation/{name}.{duration}.postprocessed.zarr"
     pds.to_zarr(path, mode="w")
     logging.info(f"Done writing to {path}")
     if do_mean:
-        mpath = f"{emulator.local_store_path}/inference/validation/{name}-mean.{duration}.postprocessed.zarr"
+        mpath = f"{emulator.inference_directory}/validation/{name}-mean.{duration}.postprocessed.zarr"
         mds.to_zarr(path, mode="w")
         logging.info(f"Done writing to {mpath}")
 
@@ -112,11 +112,14 @@ def main(Emulator):
     setup_simple_log()
     emulator = Emulator()
     duration = emulator.target_lead_time[-1]
+    ckpt_id = emulator.evaluation_checkpoint_id if emulator.evaluation_checkpoint_id is not None else emulator.num_epochs
+
+    logging.info(f"Postprocessing inference from checkpoint_id = {ckpt_id}")
     dask.config.set(scheduler="threads", num_workers=64)
 
     compute_ensemble_mean(
-        f"{emulator.local_store_path}/inference/validation/graphufs.{duration}.zarr",
-        f"{emulator.local_store_path}/inference/validation/graphufs.ensemble-mean.{duration}.zarr",
+        f"{emulator.inference_directory}/validation/graphufs.{duration}.zarr",
+        f"{emulator.inference_directory}/validation/graphufs.ensemble-mean.{duration}.zarr",
     )
 
     # The workflow below works if regridding is necessary

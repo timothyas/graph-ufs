@@ -299,6 +299,11 @@ class ReplayEmulator:
     def checkpoint_dir(self):
         return os.path.join(self.local_store_path, "models")
 
+    @property
+    def inference_directory(self):
+        ckpt_id = self.evaluation_checkpoint_id if self.evaluation_checkpoint_id is not None else self.num_epochs
+        return f"{self.local_store_path}/inference/c{ckpt_id}"
+
 
     def open_dataset(self, **kwargs):
         xds = xr.open_zarr(self.data_url, storage_options={"token": "anon"}, **kwargs)

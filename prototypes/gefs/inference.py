@@ -30,12 +30,16 @@ def handle_member(xds):
     return xds
 
 def predict(
-    params,
-    state,
     emulator,
     batchloader,
     mpi_topo,
 ) -> xr.Dataset:
+
+    # setup weights
+    ckpt_id = emulator.evaluation_checkpoint_id if emulator.evaluation_checkpoint_id is not None else emulator.num_epochs
+    logging.info(f"Running inference with checkpoint_id = {ckpt_id}")
+    logging.info(f"Reading weights ...")
+    params, state = emulator.load_checkpoint(id=ckpt_id)
 
     @hk.transform_with_state
     def run_forward(inputs, targets_template, forcings):
@@ -53,7 +57,7 @@ def predict(
     logging.info("Done Compiling Predict")
 
     hours = int(emulator.forecast_duration.value / 1e9 / 3600)
-    pname = f"{emulator.local_store_path}/inference/{batchloader.dataset.mode}/graphufs.{hours}h.zarr"
+    pname = f"{emulator.inference_directory}/{batchloader.dataset.mode}/graphufs.{hours}h.zarr"
 
     n_steps = len(batchloader)
     with open(mpi_topo.progress_file, "a") as f:
@@ -137,14 +141,7 @@ def inference(Emulator):
     )
     assert validator.data_per_device == 1
 
-    # setup weights
-    logging.info(f"Reading weights ...")
-    ckpt_id = emulator.evaluation_checkpoint_id if emulator.evaluation_checkpoint_id is not None else emulator.num_epochs
-    params, state = emulator.load_checkpoint(id=ckpt_id)
-
     predict(
-        params=params,
-        state=state,
         emulator=emulator,
         batchloader=validator,
         mpi_topo=topo,
