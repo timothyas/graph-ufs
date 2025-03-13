@@ -95,6 +95,10 @@ def predict(
                 # swap dims to be [time (aka initial condition time), lead_time (aka forecast_time), level, lat, lon]
                 predictions = swap_batch_time_dims(predictions, inittimes)
 
+                # Grab attributes
+                for key in predictions.data_vars:
+                    predictions[key].attrs = targets[key].attrs.copy()
+
                 # Store to zarr one batch at a time
                 if k == 0:
                     if mpi_topo.is_root:
@@ -102,16 +106,7 @@ def predict(
                     mpi_topo.comm.Barrier()
 
                 # Store to zarr
-                spatial_region = {d: slice(None, None) for d in predictions.dims if d not in batchloader.sample_dims}
-                rank_idx = mpi_topo.rank*batchloader.data_per_device
-                st = k*batchloader.batch_size + rank_idx
-                ed = st + batchloader.data_per_device
-                member = int(predictions.member.values)
-                region = {
-                    "time": slice(st, ed),
-                    "member": slice(member, member+1),
-                    **spatial_region,
-                }
+                region = batchloader.find_my_region(predictions)
                 predictions.to_zarr(pname, region=region)
 
             progress_bar.update()

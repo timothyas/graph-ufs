@@ -202,6 +202,23 @@ class BatchLoader():
                 self.data_counter += 1
             return data
 
+    def find_my_region(self, xds):
+        """Given a dataset, which is assumed to be a subset of a larger dataset,
+        find the logical index values where this should be stored in zarr
+
+        Args:
+            xds (xr.Dataset): with a subset of the data (e.g., a couple of initial conditions)
+
+        Returns:
+            region (dict): indicating the zarr region, e.g. {t0: slice(0, 1), member: slice(10,11)}
+        """
+        region = {k: slice(None, None) for k in xds.dims}
+        for key in self.sample_dims:
+            full_array = getattr(self.xds, key) # e.g. all of the initial conditions
+            batch_indices = [list(full_array).index(value) for value in xds[key].values]
+            region[key] = slice(batch_indices[0], batch_indices[-1]+1)
+        return region
+
     def task_done(self):
         self.data_queue.task_done()
         logging.debug(f"{self.dataset.mode} BatchLoader: marked task_done")

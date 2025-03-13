@@ -20,6 +20,7 @@ class GEFSForecastEvaluator(GEFSForecastTrainer):
     data_url = f"{_scratch}/gefs/one-degree/forecasts.validation.zarr"
     wb2_obs_url = "gs://gcp-public-data-arco-era5/ar/1959-2022-1h-360x181_equiangular_with_poles_conservative.zarr"
     target_lead_time = [f"{n}h" for n in range(6, 6*4*10+1, 6)]
+    batch_size = 32
 
 tree_util.register_pytree_node(
     GEFSForecastTrainer,

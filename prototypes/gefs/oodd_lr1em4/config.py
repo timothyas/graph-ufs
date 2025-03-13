@@ -29,6 +29,9 @@ class GEFSDeviationEvaluator(BaseGEFSEmulator):
     data_url = f"{_scratch}/gefs/one-degree/forecasts.validation.zarr"
     wb2_obs_url = "gs://gcp-public-data-arco-era5/ar/1959-2022-1h-360x181_equiangular_with_poles_conservative.zarr"
     target_lead_time = [f"{n}h" for n in range(6, 6*4*10+1, 6)]
+    #evaluation_checkpoint_id = 32
+    evaluation_checkpoint_id = 22
+    batch_size = 32
 
 
 
