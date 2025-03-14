@@ -1,0 +1,22 @@
+#!/bin/bash
+
+#SBATCH -J gefs-val
+#SBATCH -o /global/cfs/cdirs/m4718/timothys/gefs/one-degree/slurm/validation.%j.out
+#SBATCH -e /global/cfs/cdirs/m4718/timothys/gefs/one-degree/slurm/validation.%j.err
+#SBATCH --nodes=8
+#SBATCH --ntasks-per-node=128
+#SBATCH --cpus-per-task=2
+#SBATCH --qos=debug
+#SBATCH --account=m4718
+#SBATCH --constraint=cpu
+#SBATCH -t 00:30:00
+
+conda activate /global/common/software/m4718/timothys/graphufs
+pythonpath=$PYTHONPATH
+#export PYTHONPATH=~/ufs2arco
+#srun python -c "from ufs2arco.driver import Driver; Driver('recipe.validation.yaml').run()"
+
+conda deactivate
+conda activate graphufs-cpu
+export PYTHONPATH=$pythonpath
+python postprocess_inference.py
