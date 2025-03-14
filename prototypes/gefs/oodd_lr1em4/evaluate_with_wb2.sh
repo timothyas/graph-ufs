@@ -21,9 +21,10 @@ level_variables="temperature,specific_humidity,u_component_of_wind,v_component_o
 
 levels=250,500,850
 
-truth_names=("era5")
+truth_names=("era5", "gefs_ensemble_mean")
 truth_paths=( \
     "gs://gcp-public-data-arco-era5/ar/1959-2022-1h-360x181_equiangular_with_poles_conservative.zarr" \
+    $gefs_mean_path \
 )
 rename_variables='{"sp":"surface_pressure","u10":"10m_u_component_of_wind","v10":"10m_v_component_of_wind","t2m":"2m_temperature","t":"temperature","u":"u_component_of_wind","v":"v_component_of_wind","w":"vertical_velocity","q":"specific_humidity","sh2":"2m_specific_humidity","lat":"latitude","lon":"longitude","pressure":"level","gh":"geopotential","t0":"time"}'
 
@@ -36,6 +37,12 @@ do
     do
         truth_name=${truth_names[i]}
         truth_path=${truth_paths[i]}
+
+        if [[ "${truth_name}" == *"gefs"* ]] ; then
+            variables="${surface_variables},${level_variables},${noaa_variables}"
+        else
+            variables="${surface_variables},${level_variables}"
+        fi
 
         echo "Evaluating ${dataset} against ${truth_name} ..."
         python ${wb2_dir}/scripts/evaluate.py \
@@ -50,7 +57,7 @@ do
           --time_stop=${time_stop} \
           --evaluate_climatology=False \
           --evaluate_persistence=False \
-          --variables="${surface_variables},${level_variables}" \
+          --variables=${variables} \
           --levels=${levels} \
           --rename_variables=${rename_variables} \
           --skipna=True
@@ -69,34 +76,18 @@ do
       --rename_variables=${rename_variables}
 done
 
-echo "Comparing GraphUFS vs GEFS"
-python ${wb2_dir}/scripts/evaluate.py \
-  --forecast_path=${output_dir}/graphufs.${forecast_duration}.zarr \
-  --obs_path=${gefs_path} \
-  --by_init=True \
-  --output_dir=${output_dir} \
-  --output_file_prefix=graphufs_vs_gefs_${forecast_duration}_ \
-  --eval_configs=deterministic,deterministic_spatial \
-  --time_start=${time_start} \
-  --time_stop=${time_stop} \
-  --evaluate_climatology=False \
-  --evaluate_persistence=False \
-  --variables="${surface_variables},${level_variables},${noaa_variables}" \
-  --rename_variables=${rename_variables} \
-  --levels=${levels}
-
-echo "Comparing Ensemble Mean GraphUFS vs GEFS"
-python ${wb2_dir}/scripts/evaluate.py \
-  --forecast_path=${output_dir}/graphufs.ensemble-mean.${forecast_duration}.zarr \
-  --obs_path=${gefs_mean_path} \
-  --by_init=True \
-  --output_dir=${output_dir} \
-  --output_file_prefix=graphufs.ensemble-mean_vs_gefs.ensemble-mean_${forecast_duration}_ \
-  --eval_configs=deterministic,deterministic_spatial \
-  --time_start=${time_start} \
-  --time_stop=${time_stop} \
-  --evaluate_climatology=False \
-  --evaluate_persistence=False \
-  --variables="${surface_variables},${level_variables},${noaa_variables}" \
-  --rename_variables=${rename_variables} \
-  --levels=${levels}
+#echo "Comparing each individual member of GraphUFS vs GEFS"
+#python ${wb2_dir}/scripts/evaluate.py \
+#  --forecast_path=${output_dir}/graphufs.${forecast_duration}.zarr \
+#  --obs_path=${gefs_path} \
+#  --by_init=True \
+#  --output_dir=${output_dir} \
+#  --output_file_prefix=graphufs_vs_gefs_${forecast_duration}_ \
+#  --eval_configs=deterministic,deterministic_spatial \
+#  --time_start=${time_start} \
+#  --time_stop=${time_stop} \
+#  --evaluate_climatology=False \
+#  --evaluate_persistence=False \
+#  --variables="${surface_variables},${level_variables},${noaa_variables}" \
+#  --rename_variables=${rename_variables} \
+#  --levels=${levels}

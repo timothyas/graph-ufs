@@ -9,7 +9,7 @@
 #SBATCH --qos=regular
 #SBATCH --account=m4718
 #SBATCH --constraint=cpu
-#SBATCH -t 03:00:00
+#SBATCH -t 06:00:00
 
 project=gefs
 subproject=oodf_lr1em4
@@ -41,4 +41,16 @@ mkdir to-psl
 cp *.nc to-psl/
 cp $mywork/loss.nc to-psl/
 cp -r graphufs.240h.spectra.zarr to-psl/
-tar -zcvf to-psl.tar.gz to-psl/
+tar -zcf to-psl.tar.gz to-psl/ && rm -rf to-psl
+echo "Archived and removed to-psl/"
+
+# Now, tar up all the inference directories
+cd $mycommunity/${local_inference_dir}
+for dir in *.zarr; do
+    if [ -d "$dir" ]; then
+        tar -zcf "${dir}.tar.gz" "$dir" && rm -rf "$dir"
+        echo "Archived and removed $dir"
+    else
+        echo "Directory $dir does not exist, skipping..."
+    fi
+done
