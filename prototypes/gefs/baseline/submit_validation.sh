@@ -9,14 +9,8 @@
 #SBATCH --qos=debug
 #SBATCH --account=m4718
 #SBATCH --constraint=cpu
-#SBATCH -t 00:30:00
+#SBATCH -t 00:10:00
 
 conda activate /global/common/software/m4718/timothys/graphufs
-pythonpath=$PYTHONPATH
-#export PYTHONPATH=~/ufs2arco
-#srun python -c "from ufs2arco.driver import Driver; Driver('recipe.validation.yaml').run()"
-
-conda deactivate
-conda activate graphufs-cpu
-export PYTHONPATH=$pythonpath
-python postprocess_inference.py
+export PYTHONPATH=~/ufs2arco
+srun python -c "from ufs2arco.driver import Driver; Driver('recipe.validation.yaml').run()"
