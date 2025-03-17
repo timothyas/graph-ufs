@@ -21,7 +21,7 @@ level_variables="temperature,specific_humidity,u_component_of_wind,v_component_o
 
 levels=250,500,850
 
-truth_names=("era5", "gefs_ensemble_mean")
+truth_names=("era5" "gefs_ensemble_mean")
 truth_paths=( \
     "gs://gcp-public-data-arco-era5/ar/1959-2022-1h-360x181_equiangular_with_poles_conservative.zarr" \
     $gefs_mean_path \

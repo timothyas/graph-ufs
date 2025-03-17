@@ -9,7 +9,7 @@
 #SBATCH --qos=regular
 #SBATCH --account=m4718
 #SBATCH --constraint=cpu
-#SBATCH -t 06:00:00
+#SBATCH -t 08:00:00
 
 project=gefs
 subproject=oodd_lr1em4
@@ -18,7 +18,7 @@ ckpt_id=22
 conda activate graphufs-cpu
 cd /global/common/software/m4718/timothys/graph-ufs/prototypes/${project}/${subproject}
 
-#python postprocess_inference.py
+python postprocess_inference.py
 . ./evaluate_with_wb2.sh
 
 # cleanup, copy to community
@@ -34,19 +34,20 @@ cp -r $mywork/models $mycommunity
 cp $mywork/logs/training/*.00.*.* $mycommunity/logs/training
 cp $mywork/logs/inference/*.00.*.* $mycommunity/logs/inference
 cp $mywork/${local_inference_dir}/*.nc $mycommunity/${local_inference_dir}
-cp -r $mywork/${local_inference_dir}/graphufs*.zarr $mycommunity/${local_inference_dir}
+cp -r $mywork/${local_inference_dir}/*.zarr $mycommunity/${local_inference_dir}
 
 cd $mycommunity/${local_inference_dir}
 mkdir to-psl
 cp *.nc to-psl/
 cp $mywork/loss.nc to-psl/
-cp -r graphufs.240h.spectra.zarr to-psl/
-tar -zcvf to-psl.tar.gz to-psl/ && rm -rf to-psl
+cp -r *.spectra.zarr to-psl/
+tar -zcf to-psl.tar.gz to-psl/ && rm -rf to-psl
 echo "Archived and removed to-psl/"
 
 # Now, tar up all the inference directories
 cd $mycommunity/${local_inference_dir}
 for dir in *.zarr; do
+    echo "Archiving $dir..."
     if [ -d "$dir" ]; then
         tar -zcf "${dir}.tar.gz" "$dir" && rm -rf "$dir"
         echo "Archived and removed $dir"
