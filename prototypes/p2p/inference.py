@@ -84,7 +84,8 @@ def predict(
                 targets = targets.isel(time=slice(1, None, 2))
 
                 # compute diagnostics if desired
-                for key, func in diagnostic_mappings["functions"].items():
+                diagnostic_functions = diagnostic_mappings.get("functions", dict())
+                for key, func in diagnostic_functions.items():
                     if "ak" not in predictions.data_vars or "ak" not in predictions.coords:
                         cds = fvemulator.get_new_vertical_grid(list(emulator.interfaces))
                         for k2 in ["ak", "bk"]:
@@ -117,8 +118,8 @@ def predict(
                 # Store to zarr one batch at a time
                 if k == 0:
                     if mpi_topo.is_root:
-                        store_container(pname, predictions, time=batchloader.initial_times, mode="w")
-                        store_container(tname, targets, time=batchloader.initial_times, mode="w")
+                        store_container(pname, predictions, loader=batchloader, mode="w")
+                        store_container(tname, targets, loader=batchloader, mode="w")
                     mpi_topo.comm.Barrier()
 
                 # Store to zarr

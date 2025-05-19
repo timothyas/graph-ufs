@@ -12,7 +12,7 @@ from ufs2arco import Layers2Pressure
 from graphufs import diagnostics
 from graphufs.log import setup_simple_log
 from graphufs.postprocess import interp2pressure, regrid_and_rename, get_valid_initial_conditions
-from graphufs.fvemulator import fv_vertical_regrid
+from graphufs.fvemulator import fv_vertical_regrid, get_new_vertical_grid
 
 def open_predictions_and_truth(emulator):
 
@@ -23,10 +23,8 @@ def open_predictions_and_truth(emulator):
 
     # add vertical coordinate stuff
     if "ak" not in gds and "bk" not in gds:
-        nds = xr.open_zarr(emulator.norm_urls["mean"], storage_options={"token": "anon"})
-        gds["ak"] = nds["ak"]
-        gds["bk"] = nds["bk"]
-        gds = gds.set_coords(["ak", "bk"])
+        cds = get_new_vertical_grid(list(emulator.interfaces))
+        gds = gds.assign_coords({"ak": cds["ak"], "bk": cds["bk"]})
 
     # add static hgtsfc for geopotential
     if "hgtsfc_static" not in gds:
@@ -70,9 +68,10 @@ def open_targets(emulator, predictions, truth):
     diagnostic_mappings = dict()
     if emulator.diagnostics is not None:
         diagnostic_mappings = diagnostics.prepare_diagnostic_functions(emulator.diagnostics)
-    for key, func in diagnostic_mappings["functions"].items():
-        logging.info(f"{__name__}.open_targets: computing diagnostic {key}")
-        rds[key] = func(rds)
+
+        for key, func in diagnostic_mappings["functions"].items():
+            logging.info(f"{__name__}.open_targets: computing diagnostic {key}")
+            rds[key] = func(rds)
 
     # Store this as is
     replay_path = f"{emulator.local_store_path}/inference/validation/replay.vertical_regrid.zarr"

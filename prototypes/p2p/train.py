@@ -94,12 +94,12 @@ def train(RemoteEmulator, PackedEmulator):
     # setup optimizer
     steps_in_epoch = len(trainer)
     n_total = emulator.num_epochs * steps_in_epoch
-    n_linear = 1_000
+    n_linear = emulator.n_linear_warmup_steps
     n_cosine = n_total - n_linear
     optimizer = clipped_cosine_adamw(
         n_linear=n_linear,
         n_total=n_total,
-        peak_value=1e-3,
+        peak_value=emulator.peak_lr,
     )
 
     logging.info(f"Starting Training with:")
@@ -124,7 +124,7 @@ def train(RemoteEmulator, PackedEmulator):
             emulator=emulator,
             trainer=trainer,
             validator=validator,
-            weights=loss_weights,
+            loss_weights=loss_weights,
             last_input_channel_mapping=last_input_channel_mapping,
             opt_state=opt_state,
             mpi_topo=topo,
